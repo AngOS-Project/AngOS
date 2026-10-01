@@ -5,6 +5,17 @@
 #include <FS.h>
 #include "FAT.h"
 
+static void wcatomba(u8 *dest, const wchar *src, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        u16 c = src[i];
+
+        if (c <= 0x7F)
+            dest[i] = (u8)c;
+        else
+            dest[i] = '?';
+    }
+}
+
 void fat_setup(unsigned int disk, unsigned int part) {
 	bootrecord BPB;
 	fat_fs_info fs_info;
