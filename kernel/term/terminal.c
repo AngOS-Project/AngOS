@@ -202,7 +202,7 @@ void terminal_putchar(char c) {
         }
     }
 
-    cursor_x + = CHAR_W;
+    cursor_x += CHAR_W;
 }
 
 void terminal_write(const char *str) {
