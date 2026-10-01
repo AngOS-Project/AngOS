@@ -121,6 +121,70 @@ void writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
 	}
 }
 
+static bool ata_wait_not_busy(u16 port) {
+    for (u32 i = 0; i < 1000000; ++i) {
+        if (!(inb(port + STS) & BSY))
+            return true;
+    }
+
+    return false;
+}
+
+static bool ata_wait_drq(u16 port) {
+    for (u32 i = 0; i < 1000000; ++i) {
+        u8 status = inb(port + STS);
+
+        if (status & ERROR)
+            return false;
+
+        if ((status & BSY) == 0 && (status & DRQ))
+            return true;
+    }
+
+    return false;
+}
+
+static bool ata_identify_master(u64 *blocks) {
+    u16 port = PRIMARY;
+    u16 id[256];
+
+    outb(port + DHR, 0xA0);
+
+    for (u8 i = 0; i < 5; ++i)
+        inb(port + STS);
+
+    outb(port + SEC, 0);
+    outb(port + LBALO, 0);
+    outb(port + LBAMID, 0);
+    outb(port + LBAHI, 0);
+    outb(port + CMD, IDENTIFY);
+
+    u8 status = inb(port + STS);
+
+    if (status == 0)
+        return false;
+
+    if (!ata_wait_not_busy(port))
+        return false;
+
+    if (inb(port + LBAMID) != 0 || inb(port + LBAHI) != 0)
+        return false;
+
+    if (!ata_wait_drq(port))
+        return false;
+
+    for (u16 i = 0; i < 256; ++i)
+        id[i] = inw(port + DAT);
+
+    *blocks =
+        (u64)id[100] |
+        ((u64)id[101] << 16) |
+        ((u64)id[102] << 32) |
+        ((u64)id[103] << 48);
+
+    return *blocks != 0;
+}
+
 void init_disk() {
 	disktable = malloc(sizeof(diskdata) * DISKS);
 	volumes = malloc(sizeof(volume_t) * LETTERS); // Usually 26

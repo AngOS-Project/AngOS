@@ -67,12 +67,6 @@ void init(tosaithe_loader_data *loader_data) {
         init_memory();
         terminal_write("PAGING OK\n");
 
-        init_disk();
-        terminal_write("DISK OK\n");
-
-        init_disk();
-        terminal_write("DISK OK\n");
-
         keyboard_init();
 
         init_timer();
