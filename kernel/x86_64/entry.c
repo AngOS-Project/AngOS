@@ -36,7 +36,7 @@ void kernel_main(void) {
     terminal_write("Type 'help' to get started.\n\n");
 
     while (1) {
-        terminal_write("angos> ");
+        terminal_write("AngOS> ");
         keyboard_gets(input_buf, sizeof(input_buf));
         execute_command(input_buf);
     }

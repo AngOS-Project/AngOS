@@ -2,7 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <syscall.h>
-#include <FS.h>	
+#include <FS.h>
 #include "FAT.h"
 
 FILE *fopen(char *path, u8 flags) {
