@@ -144,7 +144,7 @@ void terminal_init(void) {
     if (!fb_addr || !fb_w || !fb_h || !fb_pixperline)
         return;
 
-    clear_screen();
+    terminal_clear();
 }
 
 void terminal_putchar(char c) {
