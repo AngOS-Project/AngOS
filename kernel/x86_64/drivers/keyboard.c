@@ -94,7 +94,6 @@ void keyboard_handler(void) {
             }
         }
     }
-    outb(0x20, 0x20); // Send EOI
     piceoi(false);
 }
 
