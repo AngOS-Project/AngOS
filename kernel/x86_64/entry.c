@@ -18,9 +18,7 @@ void execute_command(const char *cmd) {
         terminal_write("  ver      - Display OS kernel version\n");
         terminal_write("  reboot   - Reboot system\n");
     } else if (strcmp_local(cmd, "clear") == 0) {
-        for (int i = 0; i < 40; i++) {
-            terminal_write("\n");
-        }
+        terminal_clear();
     } else if (strcmp_local(cmd, "ver") == 0) {
         terminal_write("AngOS v0.1.0 (x86_64 Architecture)\n");
     } else if (strcmp_local(cmd, "reboot") == 0) {
