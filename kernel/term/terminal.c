@@ -91,7 +91,7 @@ static u8 glyph_row(char c, unsigned row) {
         case ':': { static const u8 g[7] = {0, 12, 12, 0, 12, 12, 0}; return g[row]; }
         case ';': { static const u8 g[7] = {0, 12, 12, 0, 12, 12, 8}; return g[row]; }
         case '<': { static const u8 g[7] = {2, 4, 8, 16, 8, 4, 2}; return g[row]; }
-        case ' = ': { static const u8 g[7] = {0, 0, 31, 0, 31, 0, 0}; return g[row]; }
+        case '=': { static const u8 g[7] = {0, 0, 31, 0, 31, 0, 0}; return g[row]; }
         case '>': { static const u8 g[7] = {8, 4, 2, 1, 2, 4, 8}; return g[row]; }
         case '?': { static const u8 g[7] = {14, 17, 1, 2, 4, 0, 4}; return g[row]; }
         case '[': { static const u8 g[7] = {14, 8, 8, 8, 8, 8, 14}; return g[row]; }
