@@ -60,8 +60,13 @@ void init(tosaithe_loader_data *loader_data) {
         init_gdt();
         terminal_write("GDT OK\n");
 
+        init_idt();
+        terminal_write("IDT OK\n");
+
         init_memory();
         terminal_write("PAGING OK\n");
+
+        keyboard_init();
 
         init_timer();
         terminal_write("PIT OK\n");
