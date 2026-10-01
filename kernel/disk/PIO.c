@@ -203,7 +203,3 @@ void init_disk()
 
     disktable[0].blocks = blocks;
 }
-
-	files = malloc(sizeof(FILE) * MAX_OPEN_FILES);
-	memset(files, 0, sizeof(FILE) * MAX_OPEN_FILES);
-}
