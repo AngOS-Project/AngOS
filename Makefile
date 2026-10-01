@@ -32,10 +32,10 @@ KERNEL_C := \
     kernel/memory/memory.c \
     kernel/term/terminal.c \
     kernel/libc/kernel.c \
-    kernel/libc/mem.c
+    kernel/libc/mem.c \
     kernel/disk/PIO.c \
     kernel/fs/FAT.c \
-    kernel/fs/FS.c \
+    kernel/fs/FS.c
 
 KERNEL_ASM := \
     kernel/x86_64/entry.s \
