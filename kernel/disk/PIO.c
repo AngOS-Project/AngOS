@@ -202,8 +202,17 @@ void init_disk() {
 
     disktable[0].blocks = blocks;
 
+    disktable[0].parts[0].loc = 0;
+    disktable[0].parts[0].size = blocks;
+
+    volumes[0].disk = 0;
+    volumes[0].partition = 0;
+
+    fat_setup(0, 0);
+
     files = malloc(sizeof(FILE) * MAX_OPEN_FILES);
 
     if (files)
         memset(files, 0, sizeof(FILE) * MAX_OPEN_FILES);
 }
+s
