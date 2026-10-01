@@ -2,7 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <syscall.h>
-#include <FS.h>
+#include <FS.h>	
 #include <FAT.h>
 
 FILE *fopen(char *path, u8 flags) {
@@ -46,7 +46,7 @@ FILE *fopen(char *path, u8 flags) {
 main_1:
 
 	while (fp->used) ++fp;
-	fp->used = TRUE;
+	fp->used = 1;
 	fp->path = fpath;
 	fp->pointer = 0;
 	fp->volume = volume;
