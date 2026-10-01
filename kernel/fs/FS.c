@@ -23,7 +23,7 @@ FILE *fopen(char *path, u8 flags) {
 	fpath[i + 1] = NULL;
 
 	if (*path++ != '|') goto error;
-	char volume = *path++ - 'A';
+	u8 volume = (u8)(*path++ - 'A');
 	if (volume >= 26) goto error;
 	// TODO: allow over 26 volumes
 	if (*path++ != '/') goto error;
