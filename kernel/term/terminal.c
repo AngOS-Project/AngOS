@@ -116,7 +116,7 @@ static void clear_row(u32 y) {
         row[x] = BG;
 }
 
-static void clear_screen(void) {
+void terminal_clear(void) {
     for (u32 y = 0; y < fb_h; ++y)
         clear_row(y);
 
