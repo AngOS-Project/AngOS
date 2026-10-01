@@ -185,68 +185,24 @@ static bool ata_identify_master(u64 *blocks) {
     return *blocks != 0;
 }
 
-void init_disk() {
-	disktable = malloc(sizeof(diskdata) * DISKS);
-	volumes = malloc(sizeof(volume_t) * LETTERS); // Usually 26
+void init_disk()
+{
+    disktable = malloc(sizeof(diskdata) * DISKS);
+    volumes = malloc(sizeof(volume_t) * LETTERS);
 
-	u16 port, i, j, volume_letter = 0;
-	u8 outcmd;
-	u8 buffer[512]; /* Ambiguously named buffer since it is used for MBR and BPB */
+    if (!disktable || !volumes)
+        return;
 
-	for (unsigned int disk = 0; disk < 4; ++disk) {
-	/* TODO: Don't assume LBA48 is supported on the drive */
-		port = PRIMARY;
-		outcmd = 0xA0;
+    memset(disktable, 0, sizeof(diskdata) * DISKS);
+    memset(volumes, 0, sizeof(volume_t) * LETTERS);
 
-		if (disk >= 2)
-			port = SECOND;
+    u64 blocks = 0;
 
-		if (disk % 2)
-			outcmd = 0xB0;
+    if (!ata_identify_master(&blocks))
+        return;
 
-		poll(BSY);
-		outb(port + DHR, outcmd);
-		outb(port + SEC, 0);
-		outb(port + LBALO, 0);
-		outb(port + LBAMID, 0);
-		outb(port + LBAHI, 0);
-		outb(port + CMD, IDENTIFY);
-
-		for (i = 0; i < 100; ++i) inw(port + DAT); /* Skip 100 inws */
-
-		for (i = 0; i < 64; i += 16) /* Read 4 inws to get disk size in LBA */
-			disktable[disk].blocks |= (u64) inw(port + DAT) << i;
-
-		for (i = 0; i < 152; ++i) inw(port + DAT); /* Finish the next 152 inws */
-
-		if (disktable[disk].blocks == 0) continue;
-
-		/* Read MBR and store partitions to table */
-
-		readsectorpio(0, 1, buffer, disk);
-
-		j = 0x1BE;
-
-		for (i = 0; i < 4; ++i) {
-			disktable[disk].parts[i].loc = buffer[j + 0x8] | buffer[j + 0x9] << 8 | buffer[j + 0xA] << 16 | buffer[j + 0xB] << 24;
-			if ((disktable[disk].parts[i].size = buffer[j + 0xC] | buffer[j + 0xD] << 8 | buffer[j + 0xE] << 16 | buffer[j + 0xF] << 24) != 0) {
-				volumes[volume_letter].disk = disk;
-				volumes[volume_letter].partition = i;
-				++volume_letter;
-			}
-			j += 16;
-		}
-
-		/* Detect filesystems */
-
-		for (i = 0; i < 4; ++i) {
-			readsectorpio(disktable[disk].parts[i].loc, 1, buffer, disk);
-			if (buffer[0x42] == 0x28 || buffer[0x42] == 0x29) { /* FAT32 detected */
-				fat_setup(disk, i);
-				continue;
-			}
-		}
-	}
+    disktable[0].blocks = blocks;
+}
 
 	files = malloc(sizeof(FILE) * MAX_OPEN_FILES);
 	memset(files, 0, sizeof(FILE) * MAX_OPEN_FILES);
