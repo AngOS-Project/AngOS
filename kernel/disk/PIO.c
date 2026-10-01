@@ -215,4 +215,3 @@ void init_disk() {
     if (files)
         memset(files, 0, sizeof(FILE) * MAX_OPEN_FILES);
 }
-s
