@@ -10,6 +10,25 @@ static int strcmp_local(const char *s1, const char *s2) {
     return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
 
+static void print_u64_decimal(u64 value) {
+    char buf[21];
+    int i = 20;
+
+    buf[i] = '\0';
+
+    if (value == 0) {
+        terminal_write("0");
+        return;
+    }
+
+    while (value > 0 && i > 0) {
+        buf[--i] = '0' + (value % 10);
+        value /= 10;
+    }
+
+    terminal_write(&buf[i]);
+}
+
 void execute_command(const char *cmd) {
     if (strcmp_local(cmd, "help") == 0) {
         terminal_write("AngOS Built-in Commands:\n");
