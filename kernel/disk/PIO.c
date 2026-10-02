@@ -6,119 +6,42 @@
 #include <FS.h>
 #include "../fs/FAT.h"
 
-#define PRIMARY	0x1F0
-#define SECOND	0x170
+#define PRIMARY 0x1F0
+#define SECOND  0x170
 
-#define DAT		0
-#define ERR		1
-#define FEA		1
-#define	SEC		2
-#define LBALO	3
-#define LBAMID	4
-#define LBAHI	5
-#define DHR		6
-#define STS		7
-#define CMD		7
+#define DAT     0
+#define ERR     1
+#define FEA     1
+#define SEC     2
+#define LBALO   3
+#define LBAMID  4
+#define LBAHI   5
+#define DHR     6
+#define STS     7
+#define CMD     7
 
-#define ERROR	0x01
-#define IDX		0x02
-#define CORR	0x04
-#define DRQ		0x08
-#define SRV		0x10
-#define DF		0x20
-#define RDY		0x40
-#define BSY		0x80
+#define ERROR    0x01
+#define IDX      0x02
+#define CORR     0x04
+#define DRQ      0x08
+#define SRV      0x10
+#define DF       0x20
+#define RDY      0x40
+#define BSY      0x80
 
-#define READ		0x24
-#define WRITE		0x34
-#define IDENTIFY	0xEC
+#define READ      0x24
+#define WRITE     0x34
+#define IDENTIFY  0xEC
 
 #define DISKS 4
-
-#define poll(status) while (inb(port + STS) & status)			/* Wait for X to clear */
-#define antipoll(status) while (!(inb(port + STS) & status))	/* Wait for X to set */
 
 FILE *files;
 diskdata *disktable;
 volume_t *volumes;
 
-void smalldelay() {
-	for (u8 i = 0; i < 15; ++i)
-		inb(PRIMARY + STS);
-}
-
-void readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
-	u16 *buf = (u16*) buffer;
-
-	u16 port = PRIMARY;
-	u8 outcmd = 0x40;
-
-	if (disk >= 2)
-		port = SECOND;
-
-	if (disk % 2)
-		outcmd = 0x50;
-
-	poll(BSY);
-
-	outb(port + DHR, outcmd);
-	outb(port + SEC, (u8) (count >> 8));
-	outb(port + LBALO, (u8) (LBA >> 24));
-	outb(port + LBAMID, (u8) (LBA >> 32));
-	outb(port + LBAHI, (u8) (LBA >> 40));
-	outb(port + SEC, (u8) count);
-	outb(port + LBALO, (u8) LBA);
-	outb(port + LBAMID, (u8) (LBA >> 8));
-	outb(port + LBAHI, (u8) (LBA >> 16));
-	outb(port + CMD, READ);
-
-	// TODO: allow count size one to be 0x100000 sectors
-	for (u16 i = 0; i < count; ++i) {
-		smalldelay();
-		poll(BSY);
-		antipoll(DRQ);
-		for (u16 j = 0; j < 256; ++j) {
-			*buf = inw(port + DAT);
-			++buf;
-		}
-	}
-}
-
-
-void writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
-	u16 *buf = (u16*) buffer;
-
-	u16 port = PRIMARY;
-	u8 outcmd = 0x40;
-
-	if (disk >= 2)
-		port = SECOND;
-
-	if (disk % 2)
-		outcmd = 0x50;
-
-	poll(BSY);
-
-	outb(port + DHR, outcmd);
-	outb(port + SEC, (u8) (count >> 8));
-	outb(port + LBALO, (u8) (LBA >> 24));
-	outb(port + LBAMID, (u8) (LBA >> 32));
-	outb(port + LBAHI, (u8) (LBA >> 40));
-	outb(port + SEC, (u8) count);
-	outb(port + LBALO, (u8) LBA);
-	outb(port + LBAMID, (u8) (LBA >> 8));
-	outb(port + LBAHI, (u8) (LBA >> 16));
-	outb(port + CMD, WRITE);
-
-	for (u16 i = 0; i < count; ++i) {
-		smalldelay();
-		poll(BSY);
-		antipoll(DRQ);
-		for (u16 j = 0; j < 256; ++j) {
-			outb(port + DAT, *buf);
-			++buf;
-		}
-	}
+void smalldelay(void) {
+    for (u8 i = 0; i < 15; ++i)
+        inb(PRIMARY + STS);
 }
 
 static bool ata_wait_not_busy(u16 port) {
@@ -144,7 +67,12 @@ static bool ata_wait_drq(u16 port) {
     return false;
 }
 
-static bool ata_identify_master(u64 *blocks) {
+bool disk_probe(u64 *blocks) {
+    if (!blocks)
+        return false;
+
+    *blocks = 0;
+
     u16 port = PRIMARY;
     u16 id[256];
 
@@ -185,8 +113,91 @@ static bool ata_identify_master(u64 *blocks) {
     return *blocks != 0;
 }
 
-void init_disk()
-{
+void readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
+    u16 *buf = (u16 *)buffer;
+
+    u16 port = PRIMARY;
+    u8 outcmd = 0x40;
+
+    if (disk >= 2)
+        port = SECOND;
+
+    if (disk % 2)
+        outcmd = 0x50;
+
+    while (inb(port + STS) & BSY) {
+    }
+
+    outb(port + DHR, outcmd);
+    outb(port + SEC, (u8)(count >> 8));
+    outb(port + LBALO, (u8)(LBA >> 24));
+    outb(port + LBAMID, (u8)(LBA >> 32));
+    outb(port + LBAHI, (u8)(LBA >> 40));
+    outb(port + SEC, (u8)count);
+    outb(port + LBALO, (u8)LBA);
+    outb(port + LBAMID, (u8)(LBA >> 8));
+    outb(port + LBAHI, (u8)(LBA >> 16));
+    outb(port + CMD, READ);
+
+    for (u16 i = 0; i < count; ++i) {
+        smalldelay();
+
+        while (inb(port + STS) & BSY) {
+        }
+
+        while (!(inb(port + STS) & DRQ)) {
+        }
+
+        for (u16 j = 0; j < 256; ++j) {
+            *buf = inw(port + DAT);
+            ++buf;
+        }
+    }
+}
+
+void writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
+    u16 *buf = (u16 *)buffer;
+
+    u16 port = PRIMARY;
+    u8 outcmd = 0x40;
+
+    if (disk >= 2)
+        port = SECOND;
+
+    if (disk % 2)
+        outcmd = 0x50;
+
+    while (inb(port + STS) & BSY) {
+    }
+
+    outb(port + DHR, outcmd);
+    outb(port + SEC, (u8)(count >> 8));
+    outb(port + LBALO, (u8)(LBA >> 24));
+    outb(port + LBAMID, (u8)(LBA >> 32));
+    outb(port + LBAHI, (u8)(LBA >> 40));
+    outb(port + SEC, (u8)count);
+    outb(port + LBALO, (u8)LBA);
+    outb(port + LBAMID, (u8)(LBA >> 8));
+    outb(port + LBAHI, (u8)(LBA >> 16));
+    outb(port + CMD, WRITE);
+
+    for (u16 i = 0; i < count; ++i) {
+        smalldelay();
+
+        while (inb(port + STS) & BSY) {
+        }
+
+        while (!(inb(port + STS) & DRQ)) {
+        }
+
+        for (u16 j = 0; j < 256; ++j) {
+            outw(port + DAT, *buf);
+            ++buf;
+        }
+    }
+}
+
+void init_disk(void) {
     disktable = malloc(sizeof(diskdata) * DISKS);
     volumes = malloc(sizeof(volume_t) * LETTERS);
 
@@ -198,7 +209,7 @@ void init_disk()
 
     u64 blocks = 0;
 
-    if (!ata_identify_master(&blocks))
+    if (!disk_probe(&blocks))
         return;
 
     disktable[0].blocks = blocks;
