@@ -226,9 +226,30 @@ unsigned long long fat_filesize(FILE *fp) {
 }
 
 bool fat_probe(unsigned int disk) {
+    u8 mbr[512];
     bootrecord bpb;
 
-    if (!disk_read_sector(0, &bpb, disk))
+    if (!disk_read_sector(0, mbr, disk))
+        return false;
+
+    if (mbr[510] != 0x55 || mbr[511] != 0xAA)
+        return false;
+
+    u8 partition_type = mbr[446 + 4];
+
+    if (partition_type != 0x0B && partition_type != 0x0C)
+        return false;
+
+    u32 partition_lba =
+        (u32)mbr[446 + 8] |
+        ((u32)mbr[446 + 9] << 8) |
+        ((u32)mbr[446 + 10] << 16) |
+        ((u32)mbr[446 + 11] << 24);
+
+    if (partition_lba == 0)
+        return false;
+
+    if (!disk_read_sector(partition_lba, &bpb, disk))
         return false;
 
     if (bpb.bootsig != 0xAA55)
