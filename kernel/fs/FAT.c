@@ -477,6 +477,116 @@ static bool fat_name_equal(const char *input, const u8 *name, const u8 *ext) {
     return input[i] == '\0' && target[i] == '\0';
 }
 
+static u16 fat16_next_cluster(u32 fat_lba, u16 cluster, unsigned int disk) {
+    u8 sector[512];
+
+    u32 offset = (u32)cluster * 2;
+    u32 lba = fat_lba + offset / 512;
+    u32 pos = offset % 512;
+
+    if (!disk_read_sector(lba, sector, disk))
+        return 0xFFFF;
+
+    return (u16)sector[pos] |
+           ((u16)sector[pos + 1] << 8);
+}
+
+static bool fat16_find_in_dir(
+    unsigned int disk,
+    u32 root_lba,
+    u32 root_sectors,
+    u32 data_lba,
+    u8 sectors_per_cluster,
+    u32 fat_lba,
+    bool root,
+    u16 dir_cluster,
+    const char *name,
+    u8 *result
+) {
+    u8 sector[512];
+
+    if (root) {
+        for (u32 s = 0; s < root_sectors; ++s) {
+            if (!disk_read_sector(root_lba + s, sector, disk))
+                return false;
+
+            for (u32 off = 0; off < 512; off += 32) {
+                u8 first = sector[off];
+
+                if (first == 0x00)
+                    return false;
+
+                if (first == 0xE5)
+                    continue;
+
+                u8 attr = sector[off + 11];
+
+                if (attr == 0x0F || (attr & 0x08))
+                    continue;
+
+                if (fat_name_equal(
+                        name,
+                        &sector[off],
+                        &sector[off + 8])) {
+
+                    memcpy(result, &sector[off], 32);
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    u16 cluster = dir_cluster;
+
+    while (cluster >= 2 && cluster < 0xFFF8) {
+        u32 cluster_lba =
+            data_lba +
+            ((u32)cluster - 2) * sectors_per_cluster;
+
+        for (u32 s = 0; s < sectors_per_cluster; ++s) {
+            if (!disk_read_sector(cluster_lba + s, sector, disk))
+                return false;
+
+            for (u32 off = 0; off < 512; off += 32) {
+                u8 first = sector[off];
+
+                if (first == 0x00)
+                    return false;
+
+                if (first == 0xE5)
+                    continue;
+
+                u8 attr = sector[off + 11];
+
+                if (attr == 0x0F || (attr & 0x08))
+                    continue;
+
+                if (fat_name_equal(
+                        name,
+                        &sector[off],
+                        &sector[off + 8])) {
+
+                    memcpy(result, &sector[off], 32);
+                    return true;
+                }
+            }
+        }
+
+        u16 next = fat16_next_cluster(fat_lba, cluster, disk);
+
+        if (next == 0xFFFF ||
+            next == 0xFFF7 ||
+            next < 2)
+            return false;
+
+        cluster = next;
+    }
+
+    return false;
+}
+
 int fat_cat(unsigned int disk, const char *filename) {
     u8 mbr[512];
     u8 boot[512];
