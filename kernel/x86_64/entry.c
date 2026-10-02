@@ -67,6 +67,7 @@ void execute_command(const char *cmd) {
         terminal_write("  diskread - Read sector 0\n");
         terminal_write("  fat      - Detect the FAT filesystem\n");
         terminal_write("  fatls    - List the FAT16 root directory\n");
+        terminal_write("  fatcat   - Read a FAT16 file\n");
         terminal_write("  reboot   - Reboot system\n");
     } else if (strcmp_local(cmd, "clear") == 0) {
         terminal_clear();
@@ -118,6 +119,11 @@ void execute_command(const char *cmd) {
     } else if (strcmp_local(cmd, "fatls") == 0) {
         if (!fat_list_root(0))
             terminal_write("Unable to read FAT16 root directory\n");
+    } else if (starts_with_local(cmd, "fatcat ")) {
+        const char *filename = cmd + 7;
+
+        if (!fat_cat(0, filename))
+            terminal_write("Unable to read file\n");
     } else if (strcmp_local(cmd, "reboot") == 0) {
         terminal_write("Rebooting system...\n");
         outb(0x64, 0xFE);
