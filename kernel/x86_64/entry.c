@@ -30,6 +30,20 @@ static void print_u64_decimal(u64 value) {
     terminal_write(&buf[i]);
 }
 
+static char hex_digit(u8 value) {
+    return value < 10 ? ('0' + value) : ('A' + value - 10);
+}
+
+static void print_u8_hex(u8 value) {
+    char buf[3];
+
+    buf[0] = hex_digit((value >> 4) & 0x0F);
+    buf[1] = hex_digit(value & 0x0F);
+    buf[2] = '\0';
+
+    terminal_write(buf);
+}
+
 void execute_command(const char *cmd) {
     if (strcmp_local(cmd, "help") == 0) {
         terminal_write("AngOS Built-in Commands:\n");
