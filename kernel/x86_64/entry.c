@@ -52,6 +52,7 @@ void execute_command(const char *cmd) {
         terminal_write("  ver      - Display OS kernel version\n");
         terminal_write("  disk     - Detect the primary disk\n");
         terminal_write("  diskread - Read sector 0\n");
+        terminal_write("  fat      - Detect the FAT32 filesystem\n");
         terminal_write("  reboot   - Reboot system\n");
     } else if (strcmp_local(cmd, "clear") == 0) {
         terminal_clear();
@@ -89,6 +90,11 @@ void execute_command(const char *cmd) {
         } else {
             terminal_write("Sector 0: READ FAILED\n");
         }
+    } else if (strcmp_local(cmd, "fat") == 0) {
+    if (fat_probe(0))
+        terminal_write("FAT32 filesystem detected\n");
+    else
+        terminal_write("FAT32 filesystem not detected\n");
     } else if (strcmp_local(cmd, "reboot") == 0) {
         terminal_write("Rebooting system...\n");
         outb(0x64, 0xFE);
