@@ -2,7 +2,6 @@
 #include <terminal.h>
 #include <cpu/IO.h>
 #include <disk.h>
-#include <disk.h>
 #include "../fs/FAT.h"
 
 static int strcmp_local(const char *s1, const char *s2) {
