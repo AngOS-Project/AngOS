@@ -592,6 +592,9 @@ int fat_cat(unsigned int disk, const char *filename) {
     u8 boot[512];
     u8 sector[512];
 
+    if (!filename || !*filename)
+        return 0;
+
     if (fat_detect(disk) != 16)
         return 0;
 
@@ -627,10 +630,8 @@ int fat_cat(unsigned int disk, const char *filename) {
         (u16)boot[22] |
         ((u16)boot[23] << 8);
 
-    if (bytes_per_sector != 512)
-        return 0;
-
-    if (sectors_per_cluster == 0 ||
+    if (bytes_per_sector != 512 ||
+        sectors_per_cluster == 0 ||
         reserved_sectors == 0 ||
         fat_count == 0 ||
         root_entries == 0 ||
@@ -649,54 +650,86 @@ int fat_cat(unsigned int disk, const char *filename) {
     u32 data_lba =
         root_lba + root_sectors;
 
-    u16 first_cluster = 0;
-    u32 file_size = 0;
-    bool found = false;
+    char path[256];
+    u32 length = 0;
 
-    for (u32 s = 0; s < root_sectors && !found; ++s) {
-        if (!disk_read_sector(root_lba + s, sector, disk))
+    while (filename[length] && length < sizeof(path) - 1) {
+        path[length] = filename[length];
+        ++length;
+    }
+
+    path[length] = '\0';
+
+    char *parts[16];
+    u32 part_count = 0;
+    char *p = path;
+
+    while (*p && part_count < 16) {
+        while (*p == '/')
+            ++p;
+
+        if (!*p)
+            break;
+
+        parts[part_count++] = p;
+
+        while (*p && *p != '/')
+            ++p;
+
+        if (*p)
+            *p++ = '\0';
+    }
+
+    if (part_count == 0)
+        return 0;
+
+    bool root = true;
+    u16 dir_cluster = 0;
+    u8 entry[32];
+
+    for (u32 i = 0; i < part_count; ++i) {
+        if (!fat16_find_in_dir(
+                disk,
+                root_lba,
+                root_sectors,
+                data_lba,
+                sectors_per_cluster,
+                fat_lba,
+                root,
+                dir_cluster,
+                parts[i],
+                entry))
             return 0;
 
-        for (u32 off = 0; off < 512; off += 32) {
-            u8 first = sector[off];
+        bool directory = (entry[11] & 0x10) != 0;
 
-            if (first == 0x00)
-                break;
+        if (i + 1 < part_count) {
+            if (!directory)
+                return 0;
 
-            if (first == 0xE5)
-                continue;
+            dir_cluster =
+                (u16)entry[26] |
+                ((u16)entry[27] << 8);
 
-            u8 attr = sector[off + 11];
+            if (dir_cluster < 2)
+                return 0;
 
-            if (attr == 0x0F || (attr & 0x08))
-                continue;
-
-            if (attr & 0x10)
-                continue;
-
-            if (fat_name_equal(
-                    filename,
-                    &sector[off],
-                    &sector[off + 8])) {
-
-                first_cluster =
-                    (u16)sector[off + 26] |
-                    ((u16)sector[off + 27] << 8);
-
-                file_size =
-                    (u32)sector[off + 28] |
-                    ((u32)sector[off + 29] << 8) |
-                    ((u32)sector[off + 30] << 16) |
-                    ((u32)sector[off + 31] << 24);
-
-                found = true;
-                break;
-            }
+            root = false;
+        } else {
+            if (directory)
+                return 0;
         }
     }
 
-    if (!found)
-        return 0;
+    u16 first_cluster =
+        (u16)entry[26] |
+        ((u16)entry[27] << 8);
+
+    u32 file_size =
+        (u32)entry[28] |
+        ((u32)entry[29] << 8) |
+        ((u32)entry[30] << 16) |
+        ((u32)entry[31] << 24);
 
     terminal_write("=== FAT16 File === \n");
 
@@ -706,7 +739,10 @@ int fat_cat(unsigned int disk, const char *filename) {
     u32 remaining = file_size;
     u16 cluster = first_cluster;
 
-    while (remaining > 0 && cluster >= 2 && cluster < 0xFFF8) {
+    while (remaining > 0 &&
+           cluster >= 2 &&
+           cluster < 0xFFF8) {
+
         u32 cluster_lba =
             data_lba +
             ((u32)cluster - 2) * sectors_per_cluster;
@@ -718,38 +754,42 @@ int fat_cat(unsigned int disk, const char *filename) {
             if (!disk_read_sector(cluster_lba + s, sector, disk))
                 return 0;
 
-            u32 count = remaining < 512 ? remaining : 512;
+            u32 count =
+                remaining < 512 ? remaining : 512;
 
             for (u32 i = 0; i < count; ++i) {
                 char c = (char)sector[i];
 
-                if (c >= 32 || c == '\n' || c == '\r' || c == '\t') {
+                if (c >= 32 ||
+                    c == '\n' ||
+                    c == '\r' ||
+                    c == '\t') {
+
                     char out[2];
                     out[0] = c;
                     out[1] = '\0';
+
                     terminal_write(out);
                 }
             }
 
-            remaining -= count;
+            remaining - = count;
         }
 
         if (remaining == 0)
             break;
 
-        u32 fat_offset = (u32)cluster * 2;
-        u32 fat_sector = fat_lba + fat_offset / 512;
-        u32 fat_offset_in_sector = fat_offset % 512;
-
-        if (!disk_read_sector(fat_sector, sector, disk))
-            return 0;
-
         cluster =
-            (u16)sector[fat_offset_in_sector] |
-            ((u16)sector[fat_offset_in_sector + 1] << 8);
+            fat16_next_cluster(
+                fat_lba,
+                cluster,
+                disk);
+
+        if (cluster == 0xFFFF)
+            return 0;
     }
 
     terminal_write("\n");
 
-    return 1;
+    return remaining == 0;
 }
