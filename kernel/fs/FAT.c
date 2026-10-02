@@ -218,11 +218,36 @@ inloop2:
 	return 2;
 }
 
-
-
 unsigned long long fat_filesize(FILE *fp) {
 	FAT_entry entry;
 	char filename[256];
 	find_fat_entry(&entry, filename, fp);
 	return (fp->size = entry.size);
+}
+
+bool fat_probe(unsigned int disk) {
+    bootrecord bpb;
+
+    if (!disk_read_sector(0, &bpb, disk))
+        return false;
+
+    if (bpb.bootsig != 0xAA55)
+        return false;
+
+    if (bpb.bytes_per_sector != 512)
+        return false;
+
+    if (bpb.sectors_per_cluster == 0)
+        return false;
+
+    if (bpb.FAT_count == 0)
+        return false;
+
+    if (bpb.sectors_per_FAT == 0)
+        return false;
+
+    if (bpb.root_cluster < 2)
+        return false;
+
+    return true;
 }
