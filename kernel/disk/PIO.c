@@ -185,7 +185,8 @@ static bool ata_identify_master(u64 *blocks) {
     return *blocks != 0;
 }
 
-void init_disk() {
+void init_disk()
+{
     disktable = malloc(sizeof(diskdata) * DISKS);
     volumes = malloc(sizeof(volume_t) * LETTERS);
 
@@ -207,8 +208,6 @@ void init_disk() {
 
     volumes[0].disk = 0;
     volumes[0].partition = 0;
-
-    fat_setup(0, 0);
 
     files = malloc(sizeof(FILE) * MAX_OPEN_FILES);
 
