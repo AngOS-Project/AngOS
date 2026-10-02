@@ -547,7 +547,7 @@ int fat_cat(unsigned int disk, const char *filename) {
         if (!disk_read_sector(root_lba + s, sector, disk))
             return 0;
 
-        for (u32 off = 0; off < 512; off + = 32) {
+        for (u32 off = 0; off < 512; off += 32) {
             u8 first = sector[off];
 
             if (first == 0x00)
@@ -621,7 +621,7 @@ int fat_cat(unsigned int disk, const char *filename) {
                 }
             }
 
-            remaining - = count;
+            remaining -= count;
         }
 
         if (remaining == 0)
