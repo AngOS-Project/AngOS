@@ -124,4 +124,7 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp);
 int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp);
 unsigned long long fat_filesize(FILE *fp);
 
+int fat_detect(unsigned int disk);
+bool fat_probe(unsigned int disk);
+
 #endif
