@@ -38,5 +38,6 @@ extern diskdata *disktable;
 extern volume_t *volumes;
 
 bool disk_probe(u64 *blocks);
+bool disk_read_sector(u64 LBA, void *buffer, unsigned int disk);
 
 #endif
