@@ -379,7 +379,7 @@ int fat_list_root(unsigned int disk) {
         if (!disk_read_sector(root_lba + s, sector, disk))
             return 0;
 
-        for (u32 off = 0; off < 512; off + = 32) {
+        for (u32 off = 0; off < 512; off += 32) {
             u8 first = sector[off];
 
             if (first == 0x00)
