@@ -91,7 +91,7 @@ run: deploy
 	/mingw64/bin/qemu-system-x86_64.exe \
 		-drive if=pflash,format=raw,readonly=on,file=/mingw64/share/qemu/edk2-x86_64-code.fd \
 		-drive if=pflash,format=raw,file=qemu/UEFI_VARS.fd \
-		-drive format=raw,file=fat:rw:32:qemu \
+		-drive format=raw,file=fat:rw:qemu \
 		-m 512M \
 		-no-reboot \
 		-d int,cpu_reset \
