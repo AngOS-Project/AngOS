@@ -37,4 +37,6 @@ void init_disk();
 extern diskdata *disktable;
 extern volume_t *volumes;
 
+bool disk_probe(u64 *blocks);
+
 #endif
