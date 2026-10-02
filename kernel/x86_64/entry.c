@@ -45,6 +45,18 @@ static void print_u8_hex(u8 value) {
     terminal_write(buf);
 }
 
+static bool starts_with_local(const char *s, const char *prefix) {
+    while (*prefix) {
+        if (*s != *prefix)
+            return false;
+
+        ++s;
+        ++prefix;
+    }
+
+    return true;
+}
+
 void execute_command(const char *cmd) {
     if (strcmp_local(cmd, "help") == 0) {
         terminal_write("AngOS Built-in Commands:\n");
