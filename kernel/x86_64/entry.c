@@ -53,7 +53,8 @@ void execute_command(const char *cmd) {
         terminal_write("  ver      - Display OS kernel version\n");
         terminal_write("  disk     - Detect the primary disk\n");
         terminal_write("  diskread - Read sector 0\n");
-        terminal_write("  fat      - Detect the FAT32 filesystem\n");
+        terminal_write("  fat      - Detect the FAT filesystem\n");
+        terminal_write("  fatls    - List the FAT16 root directory\n");
         terminal_write("  reboot   - Reboot system\n");
     } else if (strcmp_local(cmd, "clear") == 0) {
         terminal_clear();
@@ -102,6 +103,9 @@ void execute_command(const char *cmd) {
             terminal_write("FAT32 filesystem detected\n");
         else
             terminal_write("FAT filesystem not detected\n");
+    } else if (strcmp_local(cmd, "fatls") == 0) {
+        if (!fat_list_root(0))
+            terminal_write("Unable to read FAT16 root directory\n");
     } else if (strcmp_local(cmd, "reboot") == 0) {
         terminal_write("Rebooting system...\n");
         outb(0x64, 0xFE);
