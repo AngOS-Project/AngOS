@@ -45,6 +45,19 @@ void execute_command(const char *cmd) {
         outb(0x64, 0xFE); // Pulse CPU reset line via 8042 controller
     } else if (cmd[0] != '\0') {
         terminal_write("Unknown command. Type 'help' for commands.\n");
+    } else if (strcmp_local(cmd, "disk") == 0) {
+    u64 blocks = 0;
+
+    terminal_write("=== Disk ===\n");
+
+    if (disk_probe(&blocks)) {
+        terminal_write("ATA primary master: DETECTED\n");
+        terminal_write("Sectors: ");
+        print_u64_decimal(blocks);
+        terminal_write("\n");
+    } else {
+        terminal_write("ATA primary master: NOT DETECTED\n");
+    }
     }
 }
 
