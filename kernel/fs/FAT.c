@@ -432,3 +432,214 @@ int fat_list_root(unsigned int disk) {
 
     return 1;
 }
+
+static char fat_upper(char c) {
+    if (c >= 'a' && c <= 'z')
+        return (char)(c - 'a' + 'A');
+
+    return c;
+}
+
+static bool fat_name_equal(const char *input, const u8 *name, const u8 *ext) {
+    char target[13];
+    u32 n = 0;
+
+    for (u32 i = 0; i < 8 && name[i] != ' '; ++i)
+        target[n++] = fat_upper(name[i]);
+
+    bool has_ext = false;
+
+    for (u32 i = 0; i < 3; ++i) {
+        if (ext[i] != ' ') {
+            has_ext = true;
+            break;
+        }
+    }
+
+    if (has_ext) {
+        target[n++] = '.';
+
+        for (u32 i = 0; i < 3 && ext[i] != ' '; ++i)
+            target[n++] = fat_upper(ext[i]);
+    }
+
+    target[n] = '\0';
+
+    u32 i = 0;
+
+    while (input[i] && target[i]) {
+        if (fat_upper(input[i]) != target[i])
+            return false;
+
+        ++i;
+    }
+
+    return input[i] == '\0' && target[i] == '\0';
+}
+
+int fat_cat(unsigned int disk, const char *filename) {
+    u8 mbr[512];
+    u8 boot[512];
+    u8 sector[512];
+
+    if (fat_detect(disk) != 16)
+        return 0;
+
+    if (!disk_read_sector(0, mbr, disk))
+        return 0;
+
+    u32 partition_lba =
+        (u32)mbr[446 + 8] |
+        ((u32)mbr[446 + 9] << 8) |
+        ((u32)mbr[446 + 10] << 16) |
+        ((u32)mbr[446 + 11] << 24);
+
+    if (!disk_read_sector(partition_lba, boot, disk))
+        return 0;
+
+    u16 bytes_per_sector =
+        (u16)boot[11] |
+        ((u16)boot[12] << 8);
+
+    u8 sectors_per_cluster = boot[13];
+
+    u16 reserved_sectors =
+        (u16)boot[14] |
+        ((u16)boot[15] << 8);
+
+    u8 fat_count = boot[16];
+
+    u16 root_entries =
+        (u16)boot[17] |
+        ((u16)boot[18] << 8);
+
+    u16 sectors_per_fat =
+        (u16)boot[22] |
+        ((u16)boot[23] << 8);
+
+    if (bytes_per_sector != 512)
+        return 0;
+
+    if (sectors_per_cluster == 0 ||
+        reserved_sectors == 0 ||
+        fat_count == 0 ||
+        root_entries == 0 ||
+        sectors_per_fat == 0)
+        return 0;
+
+    u32 root_sectors =
+        ((u32)root_entries * 32 + 511) / 512;
+
+    u32 fat_lba =
+        partition_lba + reserved_sectors;
+
+    u32 root_lba =
+        fat_lba + ((u32)fat_count * sectors_per_fat);
+
+    u32 data_lba =
+        root_lba + root_sectors;
+
+    u16 first_cluster = 0;
+    u32 file_size = 0;
+    bool found = false;
+
+    for (u32 s = 0; s < root_sectors && !found; ++s) {
+        if (!disk_read_sector(root_lba + s, sector, disk))
+            return 0;
+
+        for (u32 off = 0; off < 512; off + = 32) {
+            u8 first = sector[off];
+
+            if (first == 0x00)
+                break;
+
+            if (first == 0xE5)
+                continue;
+
+            u8 attr = sector[off + 11];
+
+            if (attr == 0x0F || (attr & 0x08))
+                continue;
+
+            if (attr & 0x10)
+                continue;
+
+            if (fat_name_equal(
+                    filename,
+                    &sector[off],
+                    &sector[off + 8])) {
+
+                first_cluster =
+                    (u16)sector[off + 26] |
+                    ((u16)sector[off + 27] << 8);
+
+                file_size =
+                    (u32)sector[off + 28] |
+                    ((u32)sector[off + 29] << 8) |
+                    ((u32)sector[off + 30] << 16) |
+                    ((u32)sector[off + 31] << 24);
+
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if (!found)
+        return 0;
+
+    terminal_write("=== FAT16 File === \n");
+
+    if (file_size == 0)
+        return 1;
+
+    u32 remaining = file_size;
+    u16 cluster = first_cluster;
+
+    while (remaining > 0 && cluster >= 2 && cluster < 0xFFF8) {
+        u32 cluster_lba =
+            data_lba +
+            ((u32)cluster - 2) * sectors_per_cluster;
+
+        for (u32 s = 0;
+             s < sectors_per_cluster && remaining > 0;
+             ++s) {
+
+            if (!disk_read_sector(cluster_lba + s, sector, disk))
+                return 0;
+
+            u32 count = remaining < 512 ? remaining : 512;
+
+            for (u32 i = 0; i < count; ++i) {
+                char c = (char)sector[i];
+
+                if (c >= 32 || c == '\n' || c == '\r' || c == '\t') {
+                    char out[2];
+                    out[0] = c;
+                    out[1] = '\0';
+                    terminal_write(out);
+                }
+            }
+
+            remaining - = count;
+        }
+
+        if (remaining == 0)
+            break;
+
+        u32 fat_offset = (u32)cluster * 2;
+        u32 fat_sector = fat_lba + fat_offset / 512;
+        u32 fat_offset_in_sector = fat_offset % 512;
+
+        if (!disk_read_sector(fat_sector, sector, disk))
+            return 0;
+
+        cluster =
+            (u16)sector[fat_offset_in_sector] |
+            ((u16)sector[fat_offset_in_sector + 1] << 8);
+    }
+
+    terminal_write("\n");
+
+    return 1;
+}
