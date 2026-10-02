@@ -12,7 +12,6 @@
 #include <globals.h>
 #include <keyboard.h>
 #include "init.h"
-#include <disk.h>
 
 void init(tosaithe_loader_data *loader_data) {
         if (!loader_data || !loader_data->kern_map) {
