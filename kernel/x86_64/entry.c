@@ -3,7 +3,7 @@
 #include <cpu/IO.h>
 #include <disk.h>
 #include <disk.h>
-#include "FAT.h"
+#include "../fs/FAT.h"
 
 static int strcmp_local(const char *s1, const char *s2) {
     while (*s1 && (*s1 == *s2)) {
