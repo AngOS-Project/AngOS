@@ -65,6 +65,7 @@ void execute_command(const char *cmd) {
         terminal_write("  ver      - Display OS kernel version\n");
         terminal_write("  disk     - Detect the primary disk\n");
         terminal_write("  diskread - Read sector 0\n");
+        terminal_write("  diskinit - Initialize disk/filesystem table\n");
         terminal_write("  fat      - Detect the FAT filesystem\n");
         terminal_write("  fatls    - List the FAT16 root directory\n");
         terminal_write("  fatcat   - Read a FAT16 file\n");
@@ -104,6 +105,23 @@ void execute_command(const char *cmd) {
                 terminal_write("Boot signature: NOT FOUND\n");
         } else {
             terminal_write("Sector 0: READ FAILED\n");
+        }
+    } else if (strcmp_local(cmd, "diskinit") == 0) {
+        init_disk();
+
+        if (!disktable) {
+            terminal_write("Disk table initialization failed\n");
+        } else {
+            terminal_write("Disk table initialized\n");
+
+            if (disktable[0].parts[0].fs == fat12)
+                terminal_write("Partition 0: FAT12\n");
+            else if (disktable[0].parts[0].fs == fat16)
+                terminal_write("Partition 0: FAT16\n");
+            else if (disktable[0].parts[0].fs == fat32)
+                terminal_write("Partition 0: FAT32\n");
+            else
+                terminal_write("Partition 0: UNKNOWN\n");
         }
     } else if (strcmp_local(cmd, "fat") == 0) {
         int type = fat_detect(0);
