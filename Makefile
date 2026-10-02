@@ -82,3 +82,17 @@ $(UEFI):
 clean:
 	rm -rf $(BUILD)
 	$(MAKE) -C bootloader/uefi clean
+
+deploy: all
+	cp build/AngOS.efi qemu/EFI/BOOT/BOOTX64.EFI
+	cp build/AngOS.elf qemu/AngOS.elf
+
+run: deploy
+	/mingw64/bin/qemu-system-x86_64.exe \
+		-drive if=pflash,format=raw,readonly=on,file=/mingw64/share/qemu/edk2-x86_64-code.fd \
+		-drive if=pflash,format=raw,file=qemu/UEFI_VARS.fd \
+		-drive format=raw,file=fat:rw:qemu \
+		-m 512M \
+		-no-reboot \
+		-d int,cpu_reset \
+		-D qemu/qemu.log
