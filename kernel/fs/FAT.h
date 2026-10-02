@@ -126,6 +126,7 @@ unsigned long long fat_filesize(FILE *fp);
 
 int fat_detect(unsigned int disk);
 int fat_list_root(unsigned int disk);
+int fat_cat(unsigned int disk, const char *filename);
 bool fat_probe(unsigned int disk);
 
 #endif
