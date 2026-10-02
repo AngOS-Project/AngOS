@@ -9,8 +9,10 @@
 typedef u64 LBA;
 
 typedef enum {
-	none,
-	fat32
+    none,
+    fat12,
+    fat16,
+    fat32
 } FS;
 
 typedef struct {
