@@ -51,6 +51,7 @@ void execute_command(const char *cmd) {
         terminal_write("  clear    - Clear terminal screen\n");
         terminal_write("  ver      - Display OS kernel version\n");
         terminal_write("  disk     - Detect the primary disk\n");
+        terminal_write("  diskread - Read sector 0\n");
         terminal_write("  reboot   - Reboot system\n");
     } else if (strcmp_local(cmd, "clear") == 0) {
         terminal_clear();
@@ -68,6 +69,25 @@ void execute_command(const char *cmd) {
             terminal_write("\n");
         } else {
             terminal_write("ATA primary master: NOT DETECTED\n");
+        }
+    } else if (strcmp_local(cmd, "diskread") == 0) {
+        u8 sector[512];
+
+        terminal_write("=== Disk Read ===\n");
+
+        if (disk_read_sector(0, sector, 0)) {
+            terminal_write("Sector 0: READ OK\n");
+            terminal_write("Signature: 0x");
+            print_u8_hex(sector[510]);
+            print_u8_hex(sector[511]);
+            terminal_write("\n");
+
+            if (sector[510] == 0x55 && sector[511] == 0xAA)
+                terminal_write("Boot signature: PRESENT\n");
+            else
+                terminal_write("Boot signature: NOT FOUND\n");
+        } else {
+            terminal_write("Sector 0: READ FAILED\n");
         }
     } else if (strcmp_local(cmd, "reboot") == 0) {
         terminal_write("Rebooting system...\n");
