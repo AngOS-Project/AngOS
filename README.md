@@ -16,3 +16,4 @@ All contributions not matter how big or small are welcomed!
 
 AngOS is experimental software under active development.
 It may contain bugs, incomplete features, security issues, and breaking changes. **Do not rely on AngOS for important data, critical systems, or production use.**
+Please note that the AngOS repository currently contains many unused or redundant files, making the core functional codebase quite small by comparison. Future maintenance will focus on streamlining these assets to improve readability and repository health, though most files will be retained as documentation or for future use.
