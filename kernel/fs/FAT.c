@@ -4,6 +4,7 @@
 #include <string.h>
 #include <FS.h>
 #include "FAT.h"
+#include <terminal.h>
 
 static void wcatomba(u8 *dest, const wchar *src, size_t count) {
     for (size_t i = 0; i < count; ++i) {
