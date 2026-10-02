@@ -318,3 +318,96 @@ int fat_detect(unsigned int disk) {
 bool fat_probe(unsigned int disk) {
     return fat_detect(disk) != 0;
 }
+
+int fat_detect(unsigned int disk) {
+    u8 mbr[512];
+    u8 boot[512];
+
+    if (!disk_read_sector(0, mbr, disk))
+        return 0;
+
+    if (mbr[510] != 0x55 || mbr[511] != 0xAA)
+        return 0;
+
+    u8 partition_type = mbr[446 + 4];
+
+    u32 partition_lba =
+        (u32)mbr[446 + 8] |
+        ((u32)mbr[446 + 9] << 8) |
+        ((u32)mbr[446 + 10] << 16) |
+        ((u32)mbr[446 + 11] << 24);
+
+    if (partition_lba == 0)
+        return 0;
+
+    if (!disk_read_sector(partition_lba, boot, disk))
+        return 0;
+
+    if (boot[510] != 0x55 || boot[511] != 0xAA)
+        return 0;
+
+    u16 bytes_per_sector =
+        (u16)boot[11] |
+        ((u16)boot[12] << 8);
+
+    u8 sectors_per_cluster = boot[13];
+    u16 reserved_sectors =
+        (u16)boot[14] |
+        ((u16)boot[15] << 8);
+
+    u8 fat_count = boot[16];
+
+    if (bytes_per_sector != 512)
+        return 0;
+
+    if (sectors_per_cluster == 0)
+        return 0;
+
+    if (reserved_sectors == 0)
+        return 0;
+
+    if (fat_count == 0)
+        return 0;
+
+    if (partition_type == 0x01)
+        return 12;
+
+    if (partition_type == 0x06 || partition_type == 0x0E) {
+        u16 sectors_per_fat =
+            (u16)boot[22] |
+            ((u16)boot[23] << 8);
+
+        if (sectors_per_fat == 0)
+            return 0;
+
+        return 16;
+    }
+
+    if (partition_type == 0x0B || partition_type == 0x0C) {
+        u32 sectors_per_fat =
+            (u32)boot[36] |
+            ((u32)boot[37] << 8) |
+            ((u32)boot[38] << 16) |
+            ((u32)boot[39] << 24);
+
+        u32 root_cluster =
+            (u32)boot[44] |
+            ((u32)boot[45] << 8) |
+            ((u32)boot[46] << 16) |
+            ((u32)boot[47] << 24);
+
+        if (sectors_per_fat == 0)
+            return 0;
+
+        if (root_cluster < 2)
+            return 0;
+
+        return 32;
+    }
+
+    return 0;
+}
+
+bool fat_probe(unsigned int disk) {
+    return fat_detect(disk) != 0;
+}
