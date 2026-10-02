@@ -92,10 +92,16 @@ void execute_command(const char *cmd) {
             terminal_write("Sector 0: READ FAILED\n");
         }
     } else if (strcmp_local(cmd, "fat") == 0) {
-    if (fat_probe(0))
-        terminal_write("FAT32 filesystem detected\n");
-    else
-        terminal_write("FAT32 filesystem not detected\n");
+        int type = fat_detect(0);
+
+        if (type == 12)
+            terminal_write("FAT12 filesystem detected\n");
+        else if (type == 16)
+            terminal_write("FAT16 filesystem detected\n");
+        else if (type == 32)
+            terminal_write("FAT32 filesystem detected\n");
+        else
+            terminal_write("FAT filesystem not detected\n");
     } else if (strcmp_local(cmd, "reboot") == 0) {
         terminal_write("Rebooting system...\n");
         outb(0x64, 0xFE);
