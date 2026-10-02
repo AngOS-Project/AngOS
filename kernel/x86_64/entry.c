@@ -66,6 +66,7 @@ void kernel_main(void) {
 
     terminal_write("\n=== AngOS Command Shell ===\n");
     terminal_write("Type 'help' to get started.\n\n");
+    terminal_write("  disk     - Detect the primary disk\n");
 
     while (1) {
         terminal_write("AngOS> ");
