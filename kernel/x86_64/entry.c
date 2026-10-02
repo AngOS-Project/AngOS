@@ -24,7 +24,7 @@ static void print_u64_decimal(u64 value) {
 
     while (value > 0 && i > 0) {
         buf[--i] = '0' + (value % 10);
-        value / = 10;
+        value /= 10;
     }
 
     terminal_write(&buf[i]);
