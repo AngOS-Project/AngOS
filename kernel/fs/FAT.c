@@ -773,7 +773,7 @@ int fat_cat(unsigned int disk, const char *filename) {
                 }
             }
 
-            remaining - = count;
+            remaining -= count;
         }
 
         if (remaining == 0)
