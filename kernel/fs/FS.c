@@ -173,14 +173,15 @@ size_t fread(void *ptr, size_t bytes, FILE *fp) {
 	unsigned int part = volumes[fp->volume].partition;
 
 	switch (disktable[disk].parts[part].fs) {
+		case fat16:
+			return fat16_read(ptr, bytes, fp);
+
 		case fat32:
 			return fat_read(ptr, bytes, fp);
-			break;
+
 		default:
 			return 0;
-			break;
 	}
-	return 0;
 }
 
 int fseek(FILE *fp, long long offset, fpos_t position) {
