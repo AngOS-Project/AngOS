@@ -256,8 +256,14 @@ void init_disk(void) {
     volumes[0].disk = 0;
     volumes[0].partition = 0;
 
-    files = malloc(sizeof(FILE) * MAX_OPEN_FILES);
+    int type = fat_detect(0);
 
-    if (files)
-        memset(files, 0, sizeof(FILE) * MAX_OPEN_FILES);
+    if (type == 12)
+        disktable[0].parts[0].fs = fat12;
+    else if (type == 16)
+        disktable[0].parts[0].fs = fat16;
+    else if (type == 32)
+        disktable[0].parts[0].fs = fat32;
+    else
+        disktable[0].parts[0].fs = none;
 }
