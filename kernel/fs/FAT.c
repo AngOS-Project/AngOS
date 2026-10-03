@@ -707,6 +707,180 @@ int fat16_find_file_entry(const FILE *fp, FAT_entry *entry) {
     return 1;
 }
 
+size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
+    if (!ptr || !fp || !fp->path)
+        return 0;
+
+    if (fp->pointer >= fp->size)
+        return 0;
+
+    size_t available = fp->size - fp->pointer;
+
+    if (bytes > available)
+        bytes = available;
+
+    if (bytes == 0)
+        return 0;
+
+    unsigned int disk = volumes[fp->volume].disk;
+
+    u8 mbr[512];
+    u8 boot[512];
+
+    if (!disk_read_sector(0, mbr, disk))
+        return 0;
+
+    u32 partition_lba =
+        (u32)mbr[446 + 8] |
+        ((u32)mbr[446 + 9] << 8) |
+        ((u32)mbr[446 + 10] << 16) |
+        ((u32)mbr[446 + 11] << 24);
+
+    if (!disk_read_sector(partition_lba, boot, disk))
+        return 0;
+
+    u16 bytes_per_sector =
+        (u16)boot[11] |
+        ((u16)boot[12] << 8);
+
+    u8 sectors_per_cluster = boot[13];
+
+    u16 reserved_sectors =
+        (u16)boot[14] |
+        ((u16)boot[15] << 8);
+
+    u8 fat_count = boot[16];
+
+    u16 root_entries =
+        (u16)boot[17] |
+        ((u16)boot[18] << 8);
+
+    u16 sectors_per_fat =
+        (u16)boot[22] |
+        ((u16)boot[23] << 8);
+
+    if (bytes_per_sector != 512 ||
+        sectors_per_cluster == 0 ||
+        reserved_sectors == 0 ||
+        fat_count == 0 ||
+        root_entries == 0 ||
+        sectors_per_fat == 0)
+        return 0;
+
+    u32 root_sectors =
+        ((u32)root_entries * 32 + 511) / 512;
+
+    u32 fat_lba =
+        partition_lba + reserved_sectors;
+
+    u32 root_lba =
+        fat_lba + ((u32)fat_count * sectors_per_fat);
+
+    u32 data_lba =
+        root_lba + root_sectors;
+
+    FAT_entry entry;
+
+    if (!fat16_find_file_entry(fp, &entry))
+        return 0;
+
+    u16 cluster =
+        (u16)entry.cluster_low;
+
+    if (cluster < 2)
+        return 0;
+
+    u32 bytes_per_cluster =
+        (u32)bytes_per_sector * sectors_per_cluster;
+
+    u32 skipped_clusters =
+        fp->pointer / bytes_per_cluster;
+
+    u32 offset =
+        fp->pointer % bytes_per_cluster;
+
+    for (u32 i = 0; i < skipped_clusters; ++i) {
+        cluster =
+            fat16_next_cluster(
+                fat_lba,
+                cluster,
+                disk
+            );
+
+        if (cluster < 2 || cluster >= 0xFFF8)
+            return 0;
+    }
+
+    u8 sector[512];
+    size_t remaining = bytes;
+    size_t copied = 0;
+
+    while (remaining > 0) {
+        u32 cluster_lba =
+            data_lba +
+            ((u32)cluster - 2) * sectors_per_cluster;
+
+        u32 cluster_offset = offset;
+
+        for (u32 s = 0;
+             s < sectors_per_cluster && remaining > 0;
+             ++s) {
+
+            if (!disk_read_sector(
+                    cluster_lba + s,
+                    sector,
+                    disk))
+                return copied;
+
+            u32 sector_offset =
+                cluster_offset >= 512
+                ? cluster_offset - 512 * s
+                : 0;
+
+            if (s == 0)
+                sector_offset = cluster_offset;
+
+            if (sector_offset >= 512)
+                continue;
+
+            size_t count =
+                512 - sector_offset;
+
+            if (count > remaining)
+                count = remaining;
+
+            memcpy(
+                (u8 *)ptr + copied,
+                sector + sector_offset,
+                count
+            );
+
+            copied + = count;
+            remaining - = count;
+            cluster_offset = 0;
+        }
+
+        if (remaining == 0)
+            break;
+
+        cluster =
+            fat16_next_cluster(
+                fat_lba,
+                cluster,
+                disk
+            );
+
+        if (cluster < 2 || cluster >= 0xFFF8)
+            break;
+
+        offset = 0;
+    }
+
+    fp->pointer + = copied;
+
+    return copied;
+}
+
 int fat_cat(unsigned int disk, const char *filename) {
     u8 mbr[512];
     u8 boot[512];
