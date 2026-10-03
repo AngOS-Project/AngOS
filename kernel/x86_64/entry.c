@@ -28,7 +28,7 @@ static void print_u64_decimal(u64 value) {
 
     while (value > 0 && i > 0) {
         buf[--i] = '0' + (value % 10);
-        value /= 10;
+        value / = 10;
     }
 
     terminal_write(&buf[i]);
@@ -137,32 +137,37 @@ void execute_command(const char *cmd) {
                 terminal_write("Partition 0: UNKNOWN\n");
         }
 
-    } else {
-        u8 buffer[16];
+    } else if (strcmp_local(cmd, "fstest") == 0) {
+        FILE *fp = fopen("|A/EFI/BOOT/BOOTX64.EFI", 0);
 
-        terminal_write("fopen: OK\n");
+        if (!fp) {
+            terminal_write("fopen: FAILED\n");
+        } else {
+            u8 buffer[16];
 
-        terminal_write("File size: ");
-        print_u64_decimal(fp->size);
-        terminal_write(" bytes\n");
+            terminal_write("fopen: OK\n");
 
-        size_t read = fread(buffer, 16, fp);
+            terminal_write("File size: ");
+            print_u64_decimal(fp->size);
+            terminal_write(" bytes\n");
 
-        terminal_write("fread: ");
-        print_u64_decimal(read);
-        terminal_write(" bytes\n");
+            size_t read = fread(buffer, 16, fp);
 
-        terminal_write("Data: ");
+            terminal_write("fread: ");
+            print_u64_decimal(read);
+            terminal_write(" bytes\n");
 
-        for (u32 i = 0; i < read; ++i) {
-            print_u8_hex(buffer[i]);
-            terminal_write(" ");
+            terminal_write("Data: ");
+
+            for (u32 i = 0; i < read; ++i) {
+                print_u8_hex(buffer[i]);
+                terminal_write(" ");
+            }
+
+            terminal_write("\n");
+
+            fclose(fp);
         }
-
-        terminal_write("\n");
-
-        fclose(fp);
-    }
 
     } else if (strcmp_local(cmd, "fat") == 0) {
         int type = fat_detect(0);
@@ -178,9 +183,7 @@ void execute_command(const char *cmd) {
 
     } else if (strcmp_local(cmd, "fatls") == 0) {
         if (!fat_list_root(0))
-            terminal_write(
-                "Unable to read FAT16 root directory\n"
-            );
+            terminal_write("Unable to read FAT16 root directory\n");
 
     } else if (starts_with_local(cmd, "fatcat ")) {
         const char *filename = cmd + 7;
@@ -202,16 +205,12 @@ void execute_command(const char *cmd) {
 void kernel_main(void) {
     char input_buf[128];
 
-    terminal_write(
-        "\n=== AngOS Command Shell === \n"
-    );
-
-    terminal_write(
-        "Type 'help' to get started.\n\n"
-    );
+    terminal_write("\n=== AngOS Command Shell === \n");
+    terminal_write("Type 'help' to get started.\n\n");
 
     while (1) {
         terminal_write("AngOS> ");
+
         keyboard_gets(
             input_buf,
             sizeof(input_buf)
