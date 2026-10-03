@@ -3,6 +3,7 @@
 #include <cpu/IO.h>
 #include <disk.h>
 #include "../fs/FAT.h"
+#include <stdio.h>
 
 static int strcmp_local(const char *s1, const char *s2) {
     while (*s1 && (*s1 == *s2)) {
@@ -147,6 +148,17 @@ void execute_command(const char *cmd) {
         outb(0x64, 0xFE);
     } else if (cmd[0] != '\0') {
         terminal_write("Unknown command. Type 'help' for commands.\n");
+    } else if (strcmp_local(cmd, "fstest") == 0) {
+    FILE *fp = fopen("|A/EFI/BOOT/BOOTX64.EFI", 0);
+
+    if (!fp) {
+        terminal_write("fopen: FAILED\n");
+    } else {
+        terminal_write("fopen: OK\n");
+        terminal_write("File size: ");
+        print_u64_decimal(fp->size);
+        terminal_write(" bytes\n");
+        fclose(fp);
     }
 }
 
