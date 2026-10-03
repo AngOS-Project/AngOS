@@ -251,53 +251,7 @@ void init_disk(void) {
     memset(disktable, 0, sizeof(diskdata) * DISKS);
     memset(volumes, 0, sizeof(volume_t) * LETTERS);
 
-    u64 blocks = 0;
-
-    if (!disk_probe(&blocks))
-        return;
-
-    disktable[0].blocks = blocks;
-
-    u8 mbr[512];
-
-    if (!disk_read_sector(0, mbr, 0))
-        return;
-
-    if (mbr[510] != 0x55 || mbr[511] != 0xAA)
-        return;
-
-    for (unsigned int i = 0; i < 4; ++i) {
-        u32 off = 446 + i * 16;
-
-        u8 type = mbr[off + 4];
-
-        u32 start =
-            (u32)mbr[off + 8] |
-            ((u32)mbr[off + 9] << 8) |
-            ((u32)mbr[off + 10] << 16) |
-            ((u32)mbr[off + 11] << 24);
-
-        u32 size =
-            (u32)mbr[off + 12] |
-            ((u32)mbr[off + 13] << 8) |
-            ((u32)mbr[off + 14] << 16) |
-            ((u32)mbr[off + 15] << 24);
-
-        if (type == 0 || size == 0)
-            continue;
-
-        disktable[0].parts[i].loc = start;
-        disktable[0].parts[i].size = size;
-
-        if (type == 0x01)
-            disktable[0].parts[i].fs = fat12;
-        else if (type == 0x06 || type == 0x0E)
-            disktable[0].parts[i].fs = fat16;
-        else if (type == 0x0B || type == 0x0C)
-            disktable[0].parts[i].fs = fat32;
-        else
-            disktable[0].parts[i].fs = none;
-    }
+    disktable[0].parts[0].loc = 0;
 
     volumes[0].disk = 0;
     volumes[0].partition = 0;
