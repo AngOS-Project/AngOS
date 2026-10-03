@@ -137,19 +137,32 @@ void execute_command(const char *cmd) {
                 terminal_write("Partition 0: UNKNOWN\n");
         }
 
-    } else if (strcmp_local(cmd, "fstest") == 0) {
-        FILE *fp =
-            fopen("|A/EFI/BOOT/BOOTX64.EFI", 0);
+    } else {
+        u8 buffer[16];
 
-        if (!fp) {
-            terminal_write("fopen: FAILED\n");
-        } else {
-            terminal_write("fopen: OK\n");
-            terminal_write("File size: ");
-            print_u64_decimal(fp->size);
-            terminal_write(" bytes\n");
-            fclose(fp);
+        terminal_write("fopen: OK\n");
+
+        terminal_write("File size: ");
+        print_u64_decimal(fp->size);
+        terminal_write(" bytes\n");
+
+        size_t read = fread(buffer, 16, fp);
+
+        terminal_write("fread: ");
+        print_u64_decimal(read);
+        terminal_write(" bytes\n");
+
+        terminal_write("Data: ");
+
+        for (u32 i = 0; i < read; ++i) {
+            print_u8_hex(buffer[i]);
+            terminal_write(" ");
         }
+
+        terminal_write("\n");
+
+        fclose(fp);
+    }
 
     } else if (strcmp_local(cmd, "fat") == 0) {
         int type = fat_detect(0);
