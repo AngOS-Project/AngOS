@@ -855,8 +855,8 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
                 count
             );
 
-            copied + = count;
-            remaining - = count;
+            copied += count;
+            remaining -= count;
             cluster_offset = 0;
         }
 
@@ -876,7 +876,7 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
         offset = 0;
     }
 
-    fp->pointer + = copied;
+    fp->pointer += copied;
 
     return copied;
 }
