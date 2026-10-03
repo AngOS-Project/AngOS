@@ -128,6 +128,7 @@ int fat_detect(unsigned int disk);
 int fat_list_root(unsigned int disk);
 int fat_cat(unsigned int disk, const char *filename);
 int fat16_find_file_entry(const FILE *fp, FAT_entry *entry);
+size_t fat16_read(void *ptr, size_t bytes, FILE *fp);
 bool fat_probe(unsigned int disk);
 
 #endif
