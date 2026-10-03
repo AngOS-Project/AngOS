@@ -5,6 +5,9 @@
 #include <FS.h>
 #include "FAT.h"
 
+static FILE file_table[MAX_OPEN_FILES];
+FILE *files = file_table;
+
 FILE *fopen(char *path, u8 flags) {
 	void *oldpath = path; // Don't change this variable
 	unsigned int i, j = 0;
