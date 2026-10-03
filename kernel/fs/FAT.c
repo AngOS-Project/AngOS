@@ -587,6 +587,126 @@ static bool fat16_find_in_dir(
     return false;
 }
 
+int fat16_find_file_entry(const FILE *fp, FAT_entry *entry) {
+    if (!fp || !entry || !fp->path)
+        return 0;
+
+    unsigned int disk = volumes[fp->volume].disk;
+
+    if (fat_detect(disk) != 16)
+        return 0;
+
+    u8 mbr[512];
+    u8 boot[512];
+
+    if (!disk_read_sector(0, mbr, disk))
+        return 0;
+
+    u32 partition_lba =
+        (u32)mbr[446 + 8] |
+        ((u32)mbr[446 + 9] << 8) |
+        ((u32)mbr[446 + 10] << 16) |
+        ((u32)mbr[446 + 11] << 24);
+
+    if (!disk_read_sector(partition_lba, boot, disk))
+        return 0;
+
+    u16 bytes_per_sector =
+        (u16)boot[11] |
+        ((u16)boot[12] << 8);
+
+    u8 sectors_per_cluster = boot[13];
+
+    u16 reserved_sectors =
+        (u16)boot[14] |
+        ((u16)boot[15] << 8);
+
+    u8 fat_count = boot[16];
+
+    u16 root_entries =
+        (u16)boot[17] |
+        ((u16)boot[18] << 8);
+
+    u16 sectors_per_fat =
+        (u16)boot[22] |
+        ((u16)boot[23] << 8);
+
+    if (bytes_per_sector != 512 ||
+        sectors_per_cluster == 0 ||
+        reserved_sectors == 0 ||
+        fat_count == 0 ||
+        root_entries == 0 ||
+        sectors_per_fat == 0)
+        return 0;
+
+    u32 root_sectors =
+        ((u32)root_entries * 32 + 511) / 512;
+
+    u32 fat_lba =
+        partition_lba + reserved_sectors;
+
+    u32 root_lba =
+        fat_lba + ((u32)fat_count * sectors_per_fat);
+
+    u32 data_lba =
+        root_lba + root_sectors;
+
+    u32 part_count = 0;
+
+    while (fp->path[part_count] != NULL) {
+        ++part_count;
+
+        if (part_count >= 16)
+            return 0;
+    }
+
+    if (part_count == 0)
+        return 0;
+
+    bool root = true;
+    u16 dir_cluster = 0;
+    u8 found[32];
+
+    for (u32 i = 0; i < part_count; ++i) {
+        if (!fat16_find_in_dir(
+                disk,
+                root_lba,
+                root_sectors,
+                data_lba,
+                sectors_per_cluster,
+                fat_lba,
+                root,
+                dir_cluster,
+                fp->path[i],
+                found))
+            return 0;
+
+        bool directory =
+            (found[11] & 0x10) != 0;
+
+        if (i + 1 < part_count) {
+            if (!directory)
+                return 0;
+
+            dir_cluster =
+                (u16)found[26] |
+                ((u16)found[27] << 8);
+
+            if (dir_cluster < 2)
+                return 0;
+
+            root = false;
+        } else {
+            if (directory)
+                return 0;
+
+            memcpy(entry, found, sizeof(FAT_entry));
+        }
+    }
+
+    return 1;
+}
+
 int fat_cat(unsigned int disk, const char *filename) {
     u8 mbr[512];
     u8 boot[512];
