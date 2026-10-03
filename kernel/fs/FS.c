@@ -9,62 +9,135 @@ static FILE file_table[MAX_OPEN_FILES];
 FILE *files = file_table;
 
 FILE *fopen(char *path, u8 flags) {
-	void *oldpath = path; // Don't change this variable
-	unsigned int i, j = 0;
-	FILE *fp = files;
+    void *oldpath = path;
+    unsigned int i, j = 0;
+    FILE *fp = files;
 
-	// Count '/'s in path to see how many elements in array I will use
-	unsigned int dirs;
-	for (dirs = 0; *path; ++path) if (*path == '/') ++dirs;
-	if (dirs == 0) return 0;
-	path = oldpath;
+    (void)flags;
 
-	char **fpath = malloc((dirs + 1) * sizeof(char*)); // Keep 1 extra for the '\0' symbol signifying end of path
+    unsigned int dirs;
 
-	for (i = 0; i < dirs; ++i)
-		fpath[i] = malloc(FILENAME_LENGTH);
-	fpath[i + 1] = NULL;
+    for (dirs = 0; *path; ++path) {
+        if (*path == '/')
+            ++dirs;
+    }
 
-	if (*path++ != '|') goto error;
-	u8 volume = (u8)(*path++ - 'A');
-	if (volume >= 26) goto error;
-	if (*path++ != '/') goto error;
+    if (dirs == 0)
+        return 0;
 
-	while (1) {
-		i = 0;
-		while (*path != '/') {
-			if (*path == '\0') {
-				fpath[j + 1] = NULL;
-				goto main_1;
-			}
-			fpath[j][i] = *path;
-			++i;
-			++path;
-		}
-		fpath[j][i] = '\0';
-		++j;
-		++path;
-	}
+    path = oldpath;
+
+    char **fpath =
+        malloc((dirs + 1) * sizeof(char *));
+
+    if (!fpath)
+        return 0;
+
+    for (i = 0; i < dirs; ++i) {
+        fpath[i] = malloc(FILENAME_LENGTH);
+
+        if (!fpath[i]) {
+            while (i > 0)
+                free(fpath[--i]);
+
+            free(fpath);
+            return 0;
+        }
+    }
+
+    fpath[dirs] = NULL;
+
+    if (*path++ != '|')
+        goto error;
+
+    u8 volume = (u8)(*path++ - 'A');
+
+    if (volume >= LETTERS)
+        goto error;
+
+    if (*path++ != '/')
+        goto error;
+
+    while (1) {
+        i = 0;
+
+        while (*path != '/') {
+            if (*path == '\0') {
+                fpath[j][i] = '\0';
+                goto main_1;
+            }
+
+            if (i >= FILENAME_LENGTH - 1)
+                goto error;
+
+            fpath[j][i++] = *path++;
+        }
+
+        fpath[j][i] = '\0';
+
+        ++j;
+        ++path;
+
+        if (j >= dirs)
+            goto error;
+    }
+
 main_1:
 
-	while (fp->used) ++fp;
-	fp->used = 1;
-	fp->path = fpath;
-	fp->pointer = 0;
-	fp->volume = volume;
+    for (i = 0; i < MAX_OPEN_FILES; ++i) {
+        if (!files[i].used)
+            break;
+    }
 
-	switch (disktable[volumes[volume].disk].parts[volumes[volume].partition].fs) {
-		case fat32:
-			fp->size = fat_filesize(fp);
-			break;
-		default: return 0;
-	}
+    if (i >= MAX_OPEN_FILES)
+        goto error;
 
-	return fp;
+    fp = &files[i];
+
+    fp->used = 1;
+    fp->path = fpath;
+    fp->pointer = 0;
+    fp->volume = volume;
+    fp->size = 0;
+
+    unsigned int disk = volumes[volume].disk;
+    unsigned int part = volumes[volume].partition;
+
+    switch (disktable[disk].parts[part].fs) {
+        case fat16: {
+            FAT_entry entry;
+
+            if (!fat16_find_file_entry(fp, &entry))
+                goto open_error;
+
+            fp->size = entry.size;
+            break;
+        }
+
+        case fat32:
+            fp->size = fat_filesize(fp);
+            break;
+
+        default:
+            goto open_error;
+    }
+
+    return fp;
+
+open_error:
+    fp->used = 0;
 
 error:
-	free(fpath);
-	return 0;
+    if (fpath) {
+        for (i = 0; i < dirs; ++i) {
+            if (fpath[i])
+                free(fpath[i]);
+        }
+
+        free(fpath);
+    }
+
+    return 0;
 }
 
 int aligncheck(FILE *fp) {
