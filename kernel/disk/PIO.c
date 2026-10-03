@@ -35,7 +35,6 @@
 
 #define DISKS 4
 
-FILE *files;
 diskdata *disktable;
 volume_t *volumes;
 

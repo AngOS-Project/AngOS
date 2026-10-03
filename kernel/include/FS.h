@@ -6,7 +6,6 @@
 
 #define FILENAME_LENGTH 256
 
-
 extern FILE *files;
 
 #endif
