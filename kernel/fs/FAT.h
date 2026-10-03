@@ -120,15 +120,18 @@ typedef struct {
 } __attribute__((packed)) LFN_entry;
 
 void fat_setup(unsigned int disk, unsigned int part);
+
 size_t fat_read(void *ptr, size_t bytes, FILE *fp);
-int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp);
+size_t fat16_read(void *ptr, size_t bytes, FILE *fp);
+
 unsigned long long fat_filesize(FILE *fp);
 
+int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp);
 int fat_detect(unsigned int disk);
 int fat_list_root(unsigned int disk);
 int fat_cat(unsigned int disk, const char *filename);
 int fat16_find_file_entry(const FILE *fp, FAT_entry *entry);
-size_t fat16_read(void *ptr, size_t bytes, FILE *fp);
+
 bool fat_probe(unsigned int disk);
 
 #endif
