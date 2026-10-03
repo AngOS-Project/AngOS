@@ -2,15 +2,17 @@
 #include <terminal.h>
 #include <cpu/IO.h>
 #include <disk.h>
-#include "../fs/FAT.h"
 #include <stdio.h>
+#include "../fs/FAT.h"
 
 static int strcmp_local(const char *s1, const char *s2) {
     while (*s1 && (*s1 == *s2)) {
         s1++;
         s2++;
     }
-    return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+
+    return *(const unsigned char *)s1 -
+           *(const unsigned char *)s2;
 }
 
 static void print_u64_decimal(u64 value) {
@@ -26,14 +28,16 @@ static void print_u64_decimal(u64 value) {
 
     while (value > 0 && i > 0) {
         buf[--i] = '0' + (value % 10);
-        value /= 10;
+        value / = 10;
     }
 
     terminal_write(&buf[i]);
 }
 
 static char hex_digit(u8 value) {
-    return value < 10 ? ('0' + value) : ('A' + value - 10);
+    return value < 10
+        ? ('0' + value)
+        : ('A' + value - 10);
 }
 
 static void print_u8_hex(u8 value) {
@@ -67,14 +71,18 @@ void execute_command(const char *cmd) {
         terminal_write("  disk     - Detect the primary disk\n");
         terminal_write("  diskread - Read sector 0\n");
         terminal_write("  diskinit - Initialize disk/filesystem table\n");
+        terminal_write("  fstest   - Test the filesystem API\n");
         terminal_write("  fat      - Detect the FAT filesystem\n");
         terminal_write("  fatls    - List the FAT16 root directory\n");
         terminal_write("  fatcat   - Read a FAT16 file\n");
         terminal_write("  reboot   - Reboot system\n");
+
     } else if (strcmp_local(cmd, "clear") == 0) {
         terminal_clear();
+
     } else if (strcmp_local(cmd, "ver") == 0) {
         terminal_write("AngOS v0.1.0 (x86_64 Architecture)\n");
+
     } else if (strcmp_local(cmd, "disk") == 0) {
         u64 blocks = 0;
 
@@ -88,10 +96,11 @@ void execute_command(const char *cmd) {
         } else {
             terminal_write("ATA primary master: NOT DETECTED\n");
         }
+
     } else if (strcmp_local(cmd, "diskread") == 0) {
         u8 sector[512];
 
-        terminal_write("=== Disk Read ===\n");
+        terminal_write("=== Disk Read === \n");
 
         if (disk_read_sector(0, sector, 0)) {
             terminal_write("Sector 0: READ OK\n");
@@ -100,13 +109,16 @@ void execute_command(const char *cmd) {
             print_u8_hex(sector[511]);
             terminal_write("\n");
 
-            if (sector[510] == 0x55 && sector[511] == 0xAA)
+            if (sector[510] == 0x55 &&
+                sector[511] == 0xAA)
                 terminal_write("Boot signature: PRESENT\n");
             else
                 terminal_write("Boot signature: NOT FOUND\n");
+
         } else {
             terminal_write("Sector 0: READ FAILED\n");
         }
+
     } else if (strcmp_local(cmd, "diskinit") == 0) {
         init_disk();
 
@@ -124,6 +136,21 @@ void execute_command(const char *cmd) {
             else
                 terminal_write("Partition 0: UNKNOWN\n");
         }
+
+    } else if (strcmp_local(cmd, "fstest") == 0) {
+        FILE *fp =
+            fopen("|A/EFI/BOOT/BOOTX64.EFI", 0);
+
+        if (!fp) {
+            terminal_write("fopen: FAILED\n");
+        } else {
+            terminal_write("fopen: OK\n");
+            terminal_write("File size: ");
+            print_u64_decimal(fp->size);
+            terminal_write(" bytes\n");
+            fclose(fp);
+        }
+
     } else if (strcmp_local(cmd, "fat") == 0) {
         int type = fat_detect(0);
 
@@ -135,42 +162,48 @@ void execute_command(const char *cmd) {
             terminal_write("FAT32 filesystem detected\n");
         else
             terminal_write("FAT filesystem not detected\n");
+
     } else if (strcmp_local(cmd, "fatls") == 0) {
         if (!fat_list_root(0))
-            terminal_write("Unable to read FAT16 root directory\n");
+            terminal_write(
+                "Unable to read FAT16 root directory\n"
+            );
+
     } else if (starts_with_local(cmd, "fatcat ")) {
         const char *filename = cmd + 7;
 
         if (!fat_cat(0, filename))
             terminal_write("Unable to read file\n");
+
     } else if (strcmp_local(cmd, "reboot") == 0) {
         terminal_write("Rebooting system...\n");
         outb(0x64, 0xFE);
-    } else if (cmd[0] != '\0') {
-        terminal_write("Unknown command. Type 'help' for commands.\n");
-    } else if (strcmp_local(cmd, "fstest") == 0) {
-    FILE *fp = fopen("|A/EFI/BOOT/BOOTX64.EFI", 0);
 
-    if (!fp) {
-        terminal_write("fopen: FAILED\n");
-    } else {
-        terminal_write("fopen: OK\n");
-        terminal_write("File size: ");
-        print_u64_decimal(fp->size);
-        terminal_write(" bytes\n");
-        fclose(fp);
+    } else if (cmd[0] != '\0') {
+        terminal_write(
+            "Unknown command. Type 'help' for commands.\n"
+        );
     }
 }
 
 void kernel_main(void) {
     char input_buf[128];
 
-    terminal_write("\n=== AngOS Command Shell === \n");
-    terminal_write("Type 'help' to get started.\n\n");
+    terminal_write(
+        "\n=== AngOS Command Shell === \n"
+    );
+
+    terminal_write(
+        "Type 'help' to get started.\n\n"
+    );
 
     while (1) {
         terminal_write("AngOS> ");
-        keyboard_gets(input_buf, sizeof(input_buf));
+        keyboard_gets(
+            input_buf,
+            sizeof(input_buf)
+        );
+
         execute_command(input_buf);
     }
 }
