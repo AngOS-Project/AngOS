@@ -72,9 +72,9 @@ void execute_command(const char *cmd) {
         terminal_write("  diskread - Read sector 0\n");
         terminal_write("  diskinit - Initialize disk/filesystem table\n");
         terminal_write("  fstest   - Test the filesystem API\n");
+        terminal_write("  cat      - Read a file through the filesystem API\n");
         terminal_write("  fat      - Detect the FAT filesystem\n");
         terminal_write("  fatls    - List the FAT16 root directory\n");
-        terminal_write("  cat      - Read a file through the filesystem API\n");
         terminal_write("  fatcat   - Read a FAT16 file\n");
         terminal_write("  reboot   - Reboot system\n");
 
@@ -139,7 +139,8 @@ void execute_command(const char *cmd) {
         }
 
     } else if (strcmp_local(cmd, "fstest") == 0) {
-        FILE *fp = fopen("|A/EFI/BOOT/BOOTX64.EFI", 0);
+        FILE *fp =
+            fopen("|A/EFI/BOOT/BOOTX64.EFI", 0);
 
         if (!fp) {
             terminal_write("fopen: FAILED\n");
@@ -152,7 +153,8 @@ void execute_command(const char *cmd) {
             print_u64_decimal(fp->size);
             terminal_write(" bytes\n");
 
-            size_t read = fread(buffer, 16, fp);
+            size_t read =
+                fread(buffer, 16, fp);
 
             terminal_write("fread: ");
             print_u64_decimal(read);
@@ -170,81 +172,101 @@ void execute_command(const char *cmd) {
             fclose(fp);
         }
 
+    } else if (starts_with_local(cmd, "cat ")) {
+        const char *name = cmd + 4;
+
+        char path[128];
+
+        path[0] = '|';
+        path[1] = 'A';
+        path[2] = '/';
+
+        u32 i = 0;
+
+        while (name[i] &&
+               i < sizeof(path) - 4) {
+            path[i + 3] = name[i];
+            ++i;
+        }
+
+        path[i + 3] = '\0';
+
+        FILE *fp = fopen(path, 0);
+
+        if (!fp) {
+            terminal_write("cat: file not found\n");
+        } else {
+            u8 buffer[512];
+
+            while (1) {
+                size_t read =
+                    fread(buffer, sizeof(buffer), fp);
+
+                if (read == 0)
+                    break;
+
+                for (u32 j = 0; j < read; ++j) {
+                    char c = (char)buffer[j];
+
+                    if (c >= 32 ||
+                        c == '\n' ||
+                        c == '\r' ||
+                        c == '\t') {
+
+                        char out[2];
+
+                        out[0] = c;
+                        out[1] = '\0';
+
+                        terminal_write(out);
+                    }
+                }
+            }
+
+            terminal_write("\n");
+
+            fclose(fp);
+        }
+
     } else if (strcmp_local(cmd, "fat") == 0) {
         int type = fat_detect(0);
 
         if (type == 12)
-            terminal_write("FAT12 filesystem detected\n");
+            terminal_write(
+                "FAT12 filesystem detected\n"
+            );
         else if (type == 16)
-            terminal_write("FAT16 filesystem detected\n");
+            terminal_write(
+                "FAT16 filesystem detected\n"
+            );
         else if (type == 32)
-            terminal_write("FAT32 filesystem detected\n");
+            terminal_write(
+                "FAT32 filesystem detected\n"
+            );
         else
-            terminal_write("FAT filesystem not detected\n");
+            terminal_write(
+                "FAT filesystem not detected\n"
+            );
 
     } else if (strcmp_local(cmd, "fatls") == 0) {
         if (!fat_list_root(0))
-            terminal_write("Unable to read FAT16 root directory\n");
+            terminal_write(
+                "Unable to read FAT16 root directory\n"
+            );
 
     } else if (starts_with_local(cmd, "fatcat ")) {
         const char *filename = cmd + 7;
 
         if (!fat_cat(0, filename))
-            terminal_write("Unable to read file\n");
-
-    } else if (starts_with_local(cmd, "cat ")) {
-    const char *name = cmd + 4;
-
-    char path[128];
-    path[0] = '|';
-    path[1] = 'A';
-    path[2] = '/';
-
-    u32 i = 0;
-
-    while (name[i] && i < sizeof(path) - 4) {
-        path[i + 3] = name[i];
-        ++i;
-    }
-
-    path[i + 3] = '\0';
-
-    FILE *fp = fopen(path, 0);
-
-    if (!fp) {
-        terminal_write("cat: file not found\n");
-
-    } else {
-        u8 buffer[512];
-
-        while (1) {
-            size_t read = fread(buffer, sizeof(buffer), fp);
-
-            if (read == 0)
-                break;
-
-            for (u32 j = 0; j < read; ++j) {
-                char c = (char)buffer[j];
-
-                if (c >= 32 ||
-                    c == '\n' ||
-                    c == '\r' ||
-                    c == '\t') {
-
-                    char out[2];
-                    out[0] = c;
-                    out[1] = '\0';
-
-                    terminal_write(out);
-                }
-            }
-        }
-
-        terminal_write("\n");
-        fclose(fp);
+            terminal_write(
+                "Unable to read file\n"
+            );
 
     } else if (strcmp_local(cmd, "reboot") == 0) {
-        terminal_write("Rebooting system...\n");
+        terminal_write(
+            "Rebooting system...\n"
+        );
+
         outb(0x64, 0xFE);
 
     } else if (cmd[0] != '\0') {
@@ -257,8 +279,13 @@ void execute_command(const char *cmd) {
 void kernel_main(void) {
     char input_buf[128];
 
-    terminal_write("\n=== AngOS Command Shell === \n");
-    terminal_write("Type 'help' to get started.\n\n");
+    terminal_write(
+        "\n=== AngOS Command Shell === \n"
+    );
+
+    terminal_write(
+        "Type 'help' to get started.\n\n"
+    );
 
     while (1) {
         terminal_write("AngOS> ");
