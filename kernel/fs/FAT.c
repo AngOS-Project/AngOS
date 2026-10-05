@@ -707,6 +707,353 @@ int fat16_find_file_entry(const FILE *fp, FAT_entry *entry) {
     return 1;
 }
 
+int fat16_dir_open(DIR *dir, const char *path) {
+    if (!dir || !path)
+        return 0;
+
+    unsigned int disk =
+        volumes[dir->volume].disk;
+
+    if (fat_detect(disk) != 16)
+        return 0;
+
+    u8 mbr[512];
+    u8 boot[512];
+
+    if (!disk_read_sector(0, mbr, disk))
+        return 0;
+
+    u32 partition_lba =
+        (u32)mbr[446 + 8] |
+        ((u32)mbr[446 + 9] << 8) |
+        ((u32)mbr[446 + 10] << 16) |
+        ((u32)mbr[446 + 11] << 24);
+
+    if (!disk_read_sector(partition_lba, boot, disk))
+        return 0;
+
+    u16 bytes_per_sector =
+        (u16)boot[11] |
+        ((u16)boot[12] << 8);
+
+    u8 sectors_per_cluster = boot[13];
+
+    u16 reserved_sectors =
+        (u16)boot[14] |
+        ((u16)boot[15] << 8);
+
+    u8 fat_count = boot[16];
+
+    u16 root_entries =
+        (u16)boot[17] |
+        ((u16)boot[18] << 8);
+
+    u16 sectors_per_fat =
+        (u16)boot[22] |
+        ((u16)boot[23] << 8);
+
+    if (bytes_per_sector != 512 ||
+        sectors_per_cluster == 0 ||
+        reserved_sectors == 0 ||
+        fat_count == 0 ||
+        root_entries == 0 ||
+        sectors_per_fat == 0)
+        return 0;
+
+    u32 root_sectors =
+        ((u32)root_entries * 32 + 511) / 512;
+
+    u32 fat_lba =
+        partition_lba + reserved_sectors;
+
+    u32 root_lba =
+        fat_lba +
+        ((u32)fat_count * sectors_per_fat);
+
+    u32 data_lba =
+        root_lba + root_sectors;
+
+    fat16_dir_state_t *state =
+        (fat16_dir_state_t *)dir->fsdata;
+
+    memset(state, 0, sizeof(fat16_dir_state_t));
+
+    state->root_lba = root_lba;
+    state->root_sectors = root_sectors;
+    state->fat_lba = fat_lba;
+    state->data_lba = data_lba;
+    state->sectors_per_cluster = sectors_per_cluster;
+
+    const char *p = path;
+
+    if (p[0] != '|' ||
+        p[1] < 'A' ||
+        p[1] > 'Z' ||
+        p[2] != '/')
+        return 0;
+
+    p + = 3;
+
+    char copy[256];
+    u32 length = 0;
+
+    while (p[length] &&
+           length < sizeof(copy) - 1) {
+        copy[length] = p[length];
+        ++length;
+    }
+
+    copy[length] = '\0';
+
+    if (copy[0] == '\0') {
+        state->root = true;
+        state->root_sector = 0;
+        state->entry_index = 0;
+        state->done = false;
+        return 1;
+    }
+
+    char *parts[16];
+    u32 part_count = 0;
+    char *cursor = copy;
+
+    while (*cursor &&
+           part_count < 16) {
+
+        while (*cursor == '/')
+            ++cursor;
+
+        if (!*cursor)
+            break;
+
+        parts[part_count++] = cursor;
+
+        while (*cursor &&
+               *cursor != '/')
+            ++cursor;
+
+        if (*cursor)
+            *cursor++ = '\0';
+    }
+
+    if (part_count == 0)
+        return 0;
+
+    bool root = true;
+    u16 dir_cluster = 0;
+    u8 found[32];
+
+    for (u32 i = 0; i < part_count; ++i) {
+        if (!fat16_find_in_dir(
+                disk,
+                root_lba,
+                root_sectors,
+                data_lba,
+                sectors_per_cluster,
+                fat_lba,
+                root,
+                dir_cluster,
+                parts[i],
+                found))
+            return 0;
+
+        if (!(found[11] & 0x10))
+            return 0;
+
+        dir_cluster =
+            (u16)found[26] |
+            ((u16)found[27] << 8);
+
+        if (dir_cluster < 2)
+            return 0;
+
+        root = false;
+    }
+
+    state->root = false;
+    state->cluster = dir_cluster;
+    state->cluster_sector = 0;
+    state->entry_index = 0;
+    state->done = false;
+
+    return 1;
+}
+
+int fat16_dir_read(DIR *dir) {
+    if (!dir)
+        return 0;
+
+    fat16_dir_state_t *state =
+        (fat16_dir_state_t *)dir->fsdata;
+
+    unsigned int disk =
+        volumes[dir->volume].disk;
+
+    u8 sector[512];
+
+    while (!state->done) {
+
+        if (state->root) {
+
+            if (state->root_sector >=
+                state->root_sectors) {
+                state->done = true;
+                return 0;
+            }
+
+            if (!disk_read_sector(
+                    state->root_lba +
+                    state->root_sector,
+                    sector,
+                    disk)) {
+
+                state->done = true;
+                return 0;
+            }
+
+        } else {
+
+            if (state->cluster < 2 ||
+                state->cluster >= 0xFFF8) {
+
+                state->done = true;
+                return 0;
+            }
+
+            u32 lba =
+                state->data_lba +
+                ((u32)state->cluster - 2) *
+                state->sectors_per_cluster +
+                state->cluster_sector;
+
+            if (!disk_read_sector(
+                    lba,
+                    sector,
+                    disk)) {
+
+                state->done = true;
+                return 0;
+            }
+        }
+
+        while (state->entry_index < 16) {
+            u32 off =
+                (u32)state->entry_index * 32;
+
+            ++state->entry_index;
+
+            u8 first = sector[off];
+
+            if (first == 0x00) {
+                state->done = true;
+                return 0;
+            }
+
+            if (first == 0xE5)
+                continue;
+
+            u8 attr = sector[off + 11];
+
+            if (attr == 0x0F ||
+                (attr & 0x08))
+                continue;
+
+            char name[256];
+            u32 n = 0;
+
+            for (u32 i = 0;
+                 i < 8 &&
+                 sector[off + i] != ' ';
+                 ++i) {
+
+                name[n++] =
+                    fat_upper(
+                        sector[off + i]);
+            }
+
+            bool has_extension = false;
+
+            for (u32 i = 0; i < 3; ++i) {
+                if (sector[off + 8 + i] != ' ') {
+                    has_extension = true;
+                    break;
+                }
+            }
+
+            if (has_extension) {
+                name[n++] = '.';
+
+                for (u32 i = 0;
+                     i < 3 &&
+                     sector[off + 8 + i] != ' ';
+                     ++i) {
+
+                    name[n++] =
+                        fat_upper(
+                            sector[off + 8 + i]);
+                }
+            }
+
+            name[n] = '\0';
+
+            if (strcmp(name, ".") == 0 ||
+                strcmp(name, "..") == 0)
+                continue;
+
+            memcpy(
+                dir->entry.name,
+                name,
+                n + 1
+            );
+
+            dir->entry.type =
+                (attr & 0x10)
+                ? DIRENT_DIR
+                : DIRENT_FILE;
+
+            dir->entry.size =
+                (u32)sector[off + 28] |
+                ((u32)sector[off + 29] << 8) |
+                ((u32)sector[off + 30] << 16) |
+                ((u32)sector[off + 31] << 24);
+
+            return 1;
+        }
+
+        state->entry_index = 0;
+
+        if (state->root) {
+            ++state->root_sector;
+        } else {
+            ++state->cluster_sector;
+
+            if (state->cluster_sector >=
+                state->sectors_per_cluster) {
+
+                u16 next =
+                    fat16_next_cluster(
+                        state->fat_lba,
+                        state->cluster,
+                        disk
+                    );
+
+                if (next < 2 ||
+                    next == 0xFFF7 ||
+                    next >= 0xFFF8) {
+
+                    state->done = true;
+                    return 0;
+                }
+
+                state->cluster = next;
+                state->cluster_sector = 0;
+            }
+        }
+    }
+
+    return 0;
+}
+
 size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
     if (!ptr || !fp || !fp->path)
         return 0;
