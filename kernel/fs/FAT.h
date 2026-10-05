@@ -119,6 +119,26 @@ typedef struct {
 	wchar last[2];
 } __attribute__((packed)) LFN_entry;
 
+typedef struct {
+    u32 root_lba;
+    u32 root_sectors;
+    u32 fat_lba;
+    u32 data_lba;
+
+    u8 sectors_per_cluster;
+
+    bool root;
+
+    u32 root_sector;
+
+    u16 cluster;
+    u8 cluster_sector;
+
+    u8 entry_index;
+
+    bool done;
+} fat16_dir_state_t;
+
 void fat_setup(unsigned int disk, unsigned int part);
 
 size_t fat_read(void *ptr, size_t bytes, FILE *fp);
