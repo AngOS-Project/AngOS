@@ -792,7 +792,7 @@ int fat16_dir_open(DIR *dir, const char *path) {
         p[2] != '/')
         return 0;
 
-    p + = 3;
+    p += 3;
 
     char copy[256];
     u32 length = 0;
