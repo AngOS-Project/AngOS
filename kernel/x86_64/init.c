@@ -11,6 +11,7 @@
 #include <terminal.h>
 #include <globals.h>
 #include <keyboard.h>
+#include <disk.h>
 #include "init.h"
 
 void init(tosaithe_loader_data *loader_data) {
