@@ -74,7 +74,12 @@ void init(tosaithe_loader_data *loader_data) {
 
         void *test = malloc(8192);
 
-        terminal_write("KERNEL HEAP FAILED\n");
+        if (test) {
+                memset(test, 0xA5, 8192);
+                terminal_write("KERNEL HEAP OK\n");
+                free(test);
+        } else {
+                terminal_write("KERNEL HEAP FAILED\n");
         }
 
         terminal_write("DISK INITIALIZING\n");
@@ -84,12 +89,13 @@ void init(tosaithe_loader_data *loader_data) {
         if (disktable &&
             disktable[0].parts[0].fs != none) {
 
-                if (disktable[0].parts[0].fs == fat12)
+                if (disktable[0].parts[0].fs == fat12) {
                         terminal_write("FAT12 DETECTED\n");
-                else if (disktable[0].parts[0].fs == fat16)
+                } else if (disktable[0].parts[0].fs == fat16) {
                         terminal_write("FAT16 DETECTED\n");
-                else if (disktable[0].parts[0].fs == fat32)
+                } else if (disktable[0].parts[0].fs == fat32) {
                         terminal_write("FAT32 DETECTED\n");
+                }
 
         } else {
                 terminal_write("DISK FILESYSTEM FAILED\n");
