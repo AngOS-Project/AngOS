@@ -119,6 +119,78 @@ static void shell_ls(
     closedir(dir);
 }
 
+static void shell_stat(
+    const char *argument
+) {
+    if (!argument || argument[0] == '\0') {
+        terminal_write(
+            "stat: missing path\n"
+        );
+        return;
+    }
+
+    char path[128];
+
+    path[0] = '|';
+    path[1] = 'A';
+    path[2] = '/';
+
+    u32 i = 0;
+
+    while (argument[i] &&
+           i < sizeof(path) - 4) {
+
+        path[i + 3] =
+            argument[i];
+
+        ++i;
+    }
+
+    path[i + 3] = '\0';
+
+    terminal_write("Name: ");
+    terminal_write(argument);
+    terminal_write("\n");
+
+    FILE *fp = fopen(path, 0);
+
+    if (fp) {
+        terminal_write(
+            "Type: File\n"
+        );
+
+        terminal_write(
+            "Size: "
+        );
+
+        print_u64_decimal(
+            fp->size
+        );
+
+        terminal_write(
+            " bytes\n"
+        );
+
+        fclose(fp);
+        return;
+    }
+
+    DIR *dir = opendir(path);
+
+    if (dir) {
+        terminal_write(
+            "Type: Directory\n"
+        );
+
+        closedir(dir);
+        return;
+    }
+
+    terminal_write(
+        "stat: path not found\n"
+    );
+}
+
 void execute_command(const char *cmd) {
     if (strcmp_local(cmd, "help") == 0) {
 
