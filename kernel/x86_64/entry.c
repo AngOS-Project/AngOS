@@ -558,6 +558,14 @@ void execute_command(const char *cmd) {
         }
 
     } else if (
+        starts_with_local(cmd, "stat ")
+    ) {
+
+        shell_stat(
+            cmd + 5
+        );
+
+    } else if (
         strcmp_local(cmd, "fat") == 0
     ) {
 
