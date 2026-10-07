@@ -235,6 +235,10 @@ void execute_command(const char *cmd) {
         );
 
         terminal_write(
+            "  stat     - Show file or directory information\n"
+        );
+
+        terminal_write(
             "  fat      - Detect the FAT filesystem\n"
         );
 
