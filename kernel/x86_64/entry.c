@@ -191,6 +191,289 @@ static void shell_stat(
     );
 }
 
+static bool shell_make_fat83(
+    const char *input,
+    char output[11]
+) {
+    if (!input || !*input)
+        return false;
+
+    for (u32 i = 0; i < 11; ++i)
+        output[i] = ' ';
+
+    u32 base = 0;
+    u32 ext = 0;
+    bool dot = false;
+
+    for (u32 i = 0; input[i]; ++i) {
+        char c = input[i];
+
+        if (c == '/')
+            return false;
+
+        if (c == '.') {
+            if (dot)
+                return false;
+
+            dot = true;
+            continue;
+        }
+
+        if (c < 32 || c == ' ')
+            return false;
+
+        if (c >= 'a' && c <= 'z')
+            c - = 'a' - 'A';
+
+        if (!dot) {
+            if (base >= 8)
+                return false;
+
+            output[base++] = c;
+        } else {
+            if (ext >= 3)
+                return false;
+
+            output[8 + ext++] = c;
+        }
+    }
+
+    return base > 0;
+}
+
+static void shell_touch(
+    const char *argument
+) {
+    if (!argument || !argument[0]) {
+        terminal_write(
+            "touch: missing filename\n"
+        );
+        return;
+    }
+
+    if (!disktable ||
+        !volumes ||
+        disktable[0].parts[0].fs != fat16) {
+
+        terminal_write(
+            "touch: FAT16 filesystem unavailable\n"
+        );
+        return;
+    }
+
+    char fat_name[11];
+
+    if (!shell_make_fat83(
+            argument,
+            fat_name
+        )) {
+
+        terminal_write(
+            "touch: invalid 8.3 filename\n"
+        );
+        return;
+    }
+
+    u8 mbr[512];
+    u8 boot[512];
+    u8 sector[512];
+
+    if (!disk_read_sector(
+            0,
+            mbr,
+            0
+        )) {
+
+        terminal_write(
+            "touch: unable to read MBR\n"
+        );
+        return;
+    }
+
+    u32 partition_lba =
+        (u32)mbr[446 + 8] |
+        ((u32)mbr[446 + 9] << 8) |
+        ((u32)mbr[446 + 10] << 16) |
+        ((u32)mbr[446 + 11] << 24);
+
+    if (!disk_read_sector(
+            partition_lba,
+            boot,
+            0
+        )) {
+
+        terminal_write(
+            "touch: unable to read FAT boot sector\n"
+        );
+        return;
+    }
+
+    u16 bytes_per_sector =
+        (u16)boot[11] |
+        ((u16)boot[12] << 8);
+
+    u8 sectors_per_cluster =
+        boot[13];
+
+    u16 reserved_sectors =
+        (u16)boot[14] |
+        ((u16)boot[15] << 8);
+
+    u8 fat_count =
+        boot[16];
+
+    u16 root_entries =
+        (u16)boot[17] |
+        ((u16)boot[18] << 8);
+
+    u16 sectors_per_fat =
+        (u16)boot[22] |
+        ((u16)boot[23] << 8);
+
+    if (bytes_per_sector != 512 ||
+        sectors_per_cluster == 0 ||
+        reserved_sectors == 0 ||
+        fat_count == 0 ||
+        root_entries == 0 ||
+        sectors_per_fat == 0) {
+
+        terminal_write(
+            "touch: invalid FAT16 filesystem\n"
+        );
+        return;
+    }
+
+    u32 root_sectors =
+        ((u32)root_entries * 32 + 511) / 512;
+
+    u32 fat_lba =
+        partition_lba +
+        reserved_sectors;
+
+    u32 root_lba =
+        fat_lba +
+        ((u32)fat_count * sectors_per_fat);
+
+    for (u32 s = 0;
+         s < root_sectors;
+         ++s) {
+
+        if (!disk_read_sector(
+                root_lba + s,
+                sector,
+                0
+            )) {
+
+            terminal_write(
+                "touch: unable to read root directory\n"
+            );
+            return;
+        }
+
+        for (u32 off = 0;
+             off < 512;
+             off + = 32) {
+
+            u8 first =
+                sector[off];
+
+            if (first == 0x00 ||
+                first == 0xE5) {
+
+                memset(
+                    &sector[off],
+                    0,
+                    32
+                );
+
+                memcpy(
+                    &sector[off],
+                    fat_name,
+                    11
+                );
+
+                sector[off + 11] =
+                    ARCHIVE;
+
+                writesectorpio(
+                    root_lba + s,
+                    1,
+                    sector,
+                    0
+                );
+
+                u8 verify[512];
+
+                if (!disk_read_sector(
+                        root_lba + s,
+                        verify,
+                        0
+                    )) {
+
+                    terminal_write(
+                        "touch: write verification failed\n"
+                    );
+                    return;
+                }
+
+                if (memcmp(
+                        &verify[off],
+                        fat_name,
+                        11
+                    ) != 0) {
+
+                    terminal_write(
+                        "touch: write verification failed\n"
+                    );
+                    return;
+                }
+
+                terminal_write(
+                    "Created: "
+                );
+
+                terminal_write(
+                    argument
+                );
+
+                terminal_write(
+                    "\n"
+                );
+
+                return;
+            }
+
+            if (sector[off] == 0xE5)
+                continue;
+
+            bool same = true;
+
+            for (u32 i = 0;
+                 i < 11;
+                 ++i) {
+
+                if (sector[off + i] !=
+                    (u8)fat_name[i]) {
+
+                    same = false;
+                    break;
+                }
+            }
+
+            if (same) {
+                terminal_write(
+                    "touch: file already exists\n"
+                );
+                return;
+            }
+        }
+    }
+
+    terminal_write(
+        "touch: root directory is full\n"
+    );
+}
+
 void execute_command(const char *cmd) {
     if (strcmp_local(cmd, "help") == 0) {
 
