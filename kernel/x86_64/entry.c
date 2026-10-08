@@ -852,6 +852,14 @@ void execute_command(const char *cmd) {
             cmd + 5
         );
 
+     } else if (
+        starts_with_local(cmd, "touch ")
+    ) {
+
+        shell_touch(
+            cmd + 6
+        );
+
     } else if (
         strcmp_local(cmd, "fat") == 0
     ) {
