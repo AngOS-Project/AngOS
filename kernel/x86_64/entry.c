@@ -3,6 +3,7 @@
 #include <cpu/IO.h>
 #include <disk.h>
 #include <stdio.h>
+#include <string.h>
 #include "../fs/FAT.h"
 
 static int strcmp_local(
@@ -223,7 +224,7 @@ static bool shell_make_fat83(
             return false;
 
         if (c >= 'a' && c <= 'z')
-            c - = 'a' - 'A';
+            c -= 'a' - 'A';
 
         if (!dot) {
             if (base >= 8)
@@ -372,7 +373,7 @@ static void shell_nw(
 
         for (u32 off = 0;
              off < 512;
-             off + = 32) {
+             off += 32) {
 
             u8 first =
                 sector[off];
@@ -856,7 +857,7 @@ void execute_command(const char *cmd) {
         starts_with_local(cmd, "nw ")
     ) {
 
-        shell_new(
+        shell_nw(
             cmd + 3
         );
 
