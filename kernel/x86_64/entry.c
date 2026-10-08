@@ -241,7 +241,7 @@ static bool shell_make_fat83(
     return base > 0;
 }
 
-static void shell_touch(
+static void shell_nw(
     const char *argument
 ) {
     if (!argument || !argument[0]) {
@@ -522,7 +522,7 @@ void execute_command(const char *cmd) {
         );
 
         terminal_write(
-            "  touch    - Create an empty file\n"
+            "  nw       - Create a new file\n"
         );
 
         terminal_write(
@@ -852,12 +852,12 @@ void execute_command(const char *cmd) {
             cmd + 5
         );
 
-     } else if (
-        starts_with_local(cmd, "touch ")
+    } else if (
+        starts_with_local(cmd, "nw ")
     ) {
 
-        shell_touch(
-            cmd + 6
+        shell_new(
+            cmd + 3
         );
 
     } else if (
