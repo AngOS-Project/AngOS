@@ -522,6 +522,10 @@ void execute_command(const char *cmd) {
         );
 
         terminal_write(
+            "  touch    - Create an empty file\n"
+        );
+
+        terminal_write(
             "  fat      - Detect the FAT filesystem\n"
         );
 
