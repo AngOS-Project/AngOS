@@ -247,7 +247,7 @@ static void shell_nw(
 ) {
     if (!argument || !argument[0]) {
         terminal_write(
-            "touch: missing filename\n"
+            "nw: missing filename\n"
         );
         return;
     }
@@ -257,7 +257,7 @@ static void shell_nw(
         disktable[0].parts[0].fs != fat16) {
 
         terminal_write(
-            "touch: FAT16 filesystem unavailable\n"
+            "nw: FAT16 filesystem unavailable\n"
         );
         return;
     }
@@ -270,7 +270,7 @@ static void shell_nw(
         )) {
 
         terminal_write(
-            "touch: invalid 8.3 filename\n"
+            "nw: invalid 8.3 filename\n"
         );
         return;
     }
@@ -286,7 +286,7 @@ static void shell_nw(
         )) {
 
         terminal_write(
-            "touch: unable to read MBR\n"
+            "nw: unable to read MBR\n"
         );
         return;
     }
@@ -304,7 +304,7 @@ static void shell_nw(
         )) {
 
         terminal_write(
-            "touch: unable to read FAT boot sector\n"
+            "nw: unable to read FAT boot sector\n"
         );
         return;
     }
@@ -339,7 +339,7 @@ static void shell_nw(
         sectors_per_fat == 0) {
 
         terminal_write(
-            "touch: invalid FAT16 filesystem\n"
+            "nw: invalid FAT16 filesystem\n"
         );
         return;
     }
@@ -366,7 +366,7 @@ static void shell_nw(
             )) {
 
             terminal_write(
-                "touch: unable to read root directory\n"
+                "nw: unable to read root directory\n"
             );
             return;
         }
@@ -412,19 +412,25 @@ static void shell_nw(
                     )) {
 
                     terminal_write(
-                        "touch: write verification failed\n"
+                        "nw: write verification failed\n"
                     );
                     return;
                 }
 
-                if (memcmp(
-                        &verify[off],
-                        fat_name,
-                        11
-                    ) != 0) {
+                bool verified = true;
 
+                for (u32 i = 0; i < 11; ++i) {
+                    if (verify[off + i] !=
+                        (u8)fat_name[i]) {
+
+                        verified = false;
+                        break;
+                    }
+                }
+
+                if (!verified) {
                     terminal_write(
-                        "touch: write verification failed\n"
+                        "nw: write verification failed\n"
                     );
                     return;
                 }
@@ -463,7 +469,7 @@ static void shell_nw(
 
             if (same) {
                 terminal_write(
-                    "touch: file already exists\n"
+                    "nw: file already exists\n"
                 );
                 return;
             }
@@ -471,7 +477,7 @@ static void shell_nw(
     }
 
     terminal_write(
-        "touch: root directory is full\n"
+        "nw: root directory is full\n"
     );
 }
 
