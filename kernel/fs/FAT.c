@@ -707,6 +707,463 @@ int fat16_find_file_entry(const FILE *fp, FAT_entry *entry) {
     return 1;
 }
 
+static bool fat16_write_fat_entry_copy(
+    u32 fat_base,
+    u32 sectors_per_fat,
+    u16 cluster,
+    u16 value,
+    unsigned int disk
+) {
+    u32 offset = (u32)cluster * 2;
+
+    if (offset + 1 >= sectors_per_fat * 512)
+        return false;
+
+    u32 lba = fat_base + offset / 512;
+    u32 pos = offset % 512;
+
+    u8 sector[512];
+    u8 verify[512];
+
+    if (!disk_read_sector(lba, sector, disk))
+        return false;
+
+    sector[pos] = (u8)value;
+    sector[pos + 1] = (u8)(value >> 8);
+
+    writesectorpio(lba, 1, sector, disk);
+
+    if (!disk_read_sector(lba, verify, disk))
+        return false;
+
+    return verify[pos] == (u8)value &&
+           verify[pos + 1] == (u8)(value >> 8);
+}
+
+static void fat16_clear_cluster(
+    u32 fat_lba,
+    u32 sectors_per_fat,
+    u8 fat_count,
+    u16 cluster,
+    unsigned int disk
+) {
+    for (u32 copy = 0; copy < fat_count; ++copy) {
+        fat16_write_fat_entry_copy(
+            fat_lba + copy * sectors_per_fat,
+            sectors_per_fat,
+            cluster,
+            0,
+            disk
+        );
+    }
+}
+
+int fat16_write_empty_file(
+    const char name[11],
+    const u8 *data,
+    u32 length
+) {
+    if (!name || !data || length == 0)
+        return FAT16_WRITE_BAD_FS;
+
+    if (!disktable || !volumes ||
+        disktable[0].parts[0].fs != fat16)
+        return FAT16_WRITE_BAD_FS;
+
+    unsigned int disk = volumes[0].disk;
+
+    u8 mbr[512];
+    u8 boot[512];
+    u8 sector[512];
+    u8 verify[512];
+
+    if (!disk_read_sector(0, mbr, disk))
+        return FAT16_WRITE_IO_ERROR;
+
+    if (mbr[510] != 0x55 || mbr[511] != 0xAA)
+        return FAT16_WRITE_BAD_FS;
+
+    u32 partition_lba =
+        (u32)mbr[446 + 8] |
+        ((u32)mbr[446 + 9] << 8) |
+        ((u32)mbr[446 + 10] << 16) |
+        ((u32)mbr[446 + 11] << 24);
+
+    if (!disk_read_sector(partition_lba, boot, disk))
+        return FAT16_WRITE_IO_ERROR;
+
+    u16 bytes_per_sector =
+        (u16)boot[11] |
+        ((u16)boot[12] << 8);
+
+    u8 sectors_per_cluster = boot[13];
+
+    u16 reserved_sectors =
+        (u16)boot[14] |
+        ((u16)boot[15] << 8);
+
+    u8 fat_count = boot[16];
+
+    u16 root_entries =
+        (u16)boot[17] |
+        ((u16)boot[18] << 8);
+
+    u16 sectors_per_fat =
+        (u16)boot[22] |
+        ((u16)boot[23] << 8);
+
+    u32 total_sectors =
+        (u16)boot[19] |
+        ((u32)boot[20] << 8);
+
+    if (total_sectors == 0) {
+        total_sectors =
+            (u32)boot[32] |
+            ((u32)boot[33] << 8) |
+            ((u32)boot[34] << 16) |
+            ((u32)boot[35] << 24);
+    }
+
+    if (bytes_per_sector != 512 ||
+        sectors_per_cluster == 0 ||
+        reserved_sectors == 0 ||
+        fat_count == 0 ||
+        root_entries == 0 ||
+        sectors_per_fat == 0 ||
+        total_sectors == 0)
+        return FAT16_WRITE_BAD_FS;
+
+    u32 root_sectors =
+        ((u32)root_entries * 32 + 511) / 512;
+
+    u32 fat_lba =
+        partition_lba + reserved_sectors;
+
+    u32 root_lba =
+        fat_lba + (u32)fat_count * sectors_per_fat;
+
+    u32 metadata_sectors =
+        (u32)reserved_sectors +
+        (u32)fat_count * sectors_per_fat +
+        root_sectors;
+
+    if (total_sectors <= metadata_sectors)
+        return FAT16_WRITE_BAD_FS;
+
+    u32 data_lba =
+        partition_lba + metadata_sectors;
+
+    u32 cluster_count =
+        (total_sectors - metadata_sectors) /
+        sectors_per_cluster;
+
+    u32 max_cluster = cluster_count + 1;
+
+    if (max_cluster > 0xFFEF)
+        max_cluster = 0xFFEF;
+
+    u32 fat_entry_count =
+        (u32)sectors_per_fat * 512 / 2;
+
+    if (fat_entry_count < 3)
+        return FAT16_WRITE_BAD_FS;
+
+    if (max_cluster >= fat_entry_count)
+        max_cluster = fat_entry_count - 1;
+
+    if (max_cluster < 2)
+        return FAT16_WRITE_BAD_FS;
+
+    u32 bytes_per_cluster =
+        (u32)sectors_per_cluster * 512;
+
+    if (length > bytes_per_cluster)
+        return FAT16_WRITE_TOO_LARGE;
+
+    bool found = false;
+    bool end_of_directory = false;
+
+    u32 directory_sector_lba = 0;
+    u32 directory_offset = 0;
+    u8 directory_entry[32];
+
+    u32 entries_seen = 0;
+
+    for (u32 s = 0;
+         s < root_sectors && !found && !end_of_directory;
+         ++s) {
+
+        if (!disk_read_sector(root_lba + s, sector, disk))
+            return FAT16_WRITE_IO_ERROR;
+
+        for (u32 off = 0;
+             off < 512 && entries_seen < root_entries;
+             off += 32, ++entries_seen) {
+
+            u8 first = sector[off];
+
+            if (first == 0x00) {
+                end_of_directory = true;
+                break;
+            }
+
+            if (first == 0xE5)
+                continue;
+
+            u8 attr = sector[off + 11];
+
+            if (attr == 0x0F || (attr & 0x08))
+                continue;
+
+            bool same = true;
+
+            for (u32 i = 0; i < 11; ++i) {
+                if (sector[off + i] != (u8)name[i]) {
+                    same = false;
+                    break;
+                }
+            }
+
+            if (same) {
+                memcpy(
+                    directory_entry,
+                    &sector[off],
+                    sizeof(directory_entry)
+                );
+
+                directory_sector_lba = root_lba + s;
+                directory_offset = off;
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if (!found)
+        return FAT16_WRITE_NOT_FOUND;
+
+    if (directory_entry[11] & 0x10)
+        return FAT16_WRITE_NOT_FILE;
+
+    u16 old_cluster =
+        (u16)directory_entry[26] |
+        ((u16)directory_entry[27] << 8);
+
+    u16 old_cluster_high =
+        (u16)directory_entry[20] |
+        ((u16)directory_entry[21] << 8);
+
+    u32 old_size =
+        (u32)directory_entry[28] |
+        ((u32)directory_entry[29] << 8) |
+        ((u32)directory_entry[30] << 16) |
+        ((u32)directory_entry[31] << 24);
+
+    if (old_size != 0 ||
+        old_cluster != 0 ||
+        old_cluster_high != 0)
+        return FAT16_WRITE_NOT_EMPTY;
+
+    u16 free_cluster = 0;
+
+    for (u32 c = 2; c <= max_cluster; ++c) {
+        bool free_cluster_candidate = true;
+
+        for (u32 copy = 0; copy < fat_count; ++copy) {
+            u32 offset = c * 2;
+
+            u32 lba =
+                fat_lba +
+                copy * sectors_per_fat +
+                offset / 512;
+
+            u32 pos = offset % 512;
+
+            if (!disk_read_sector(lba, sector, disk))
+                return FAT16_WRITE_IO_ERROR;
+
+            u16 value =
+                (u16)sector[pos] |
+                ((u16)sector[pos + 1] << 8);
+
+            if (value != 0) {
+                free_cluster_candidate = false;
+                break;
+            }
+        }
+
+        if (free_cluster_candidate) {
+            free_cluster = (u16)c;
+            break;
+        }
+    }
+
+    if (free_cluster == 0)
+        return FAT16_WRITE_NO_SPACE;
+
+    /*
+     * Write the content and zero-fill the rest of its cluster.
+     */
+    u32 cluster_lba =
+        data_lba +
+        ((u32)free_cluster - 2) * sectors_per_cluster;
+
+    for (u32 s = 0; s < sectors_per_cluster; ++s) {
+        memset(sector, 0, sizeof(sector));
+
+        u32 start = s * 512;
+
+        if (start < length) {
+            u32 count = length - start;
+
+            if (count > 512)
+                count = 512;
+
+            memcpy(sector, data + start, count);
+        }
+
+        writesectorpio(
+            cluster_lba + s,
+            1,
+            sector,
+            disk
+        );
+
+        if (!disk_read_sector(
+                cluster_lba + s,
+                verify,
+                disk))
+            return FAT16_WRITE_IO_ERROR;
+
+        for (u32 i = 0; i < 512; ++i) {
+            if (sector[i] != verify[i])
+                return FAT16_WRITE_IO_ERROR;
+        }
+    }
+
+    /*
+     * Mark the allocated cluster as end-of-chain in every FAT copy.
+     */
+    for (u32 copy = 0; copy < fat_count; ++copy) {
+        if (!fat16_write_fat_entry_copy(
+                fat_lba + copy * sectors_per_fat,
+                sectors_per_fat,
+                free_cluster,
+                0xFFFF,
+                disk)) {
+
+            fat16_clear_cluster(
+                fat_lba,
+                sectors_per_fat,
+                fat_count,
+                free_cluster,
+                disk
+            );
+
+            return FAT16_WRITE_IO_ERROR;
+        }
+    }
+
+    /*
+     * Update the directory entry only if it is still empty.
+     */
+    if (!disk_read_sector(
+            directory_sector_lba,
+            sector,
+            disk)) {
+
+        fat16_clear_cluster(
+            fat_lba,
+            sectors_per_fat,
+            fat_count,
+            free_cluster,
+            disk
+        );
+
+        return FAT16_WRITE_IO_ERROR;
+    }
+
+    bool same_name = true;
+
+    for (u32 i = 0; i < 11; ++i) {
+        if (sector[directory_offset + i] != (u8)name[i]) {
+            same_name = false;
+            break;
+        }
+    }
+
+    if (!same_name ||
+        sector[directory_offset + 28] != 0 ||
+        sector[directory_offset + 29] != 0 ||
+        sector[directory_offset + 30] != 0 ||
+        sector[directory_offset + 31] != 0 ||
+        sector[directory_offset + 26] != 0 ||
+        sector[directory_offset + 27] != 0) {
+
+        fat16_clear_cluster(
+            fat_lba,
+            sectors_per_fat,
+            fat_count,
+            free_cluster,
+            disk
+        );
+
+        return same_name
+            ? FAT16_WRITE_NOT_EMPTY
+            : FAT16_WRITE_NOT_FOUND;
+    }
+
+    sector[directory_offset + 20] = 0;
+    sector[directory_offset + 21] = 0;
+
+    sector[directory_offset + 26] = (u8)free_cluster;
+    sector[directory_offset + 27] = (u8)(free_cluster >> 8);
+
+    sector[directory_offset + 28] = (u8)length;
+    sector[directory_offset + 29] = (u8)(length >> 8);
+    sector[directory_offset + 30] = (u8)(length >> 16);
+    sector[directory_offset + 31] = (u8)(length >> 24);
+
+    writesectorpio(
+        directory_sector_lba,
+        1,
+        sector,
+        disk
+    );
+
+    if (!disk_read_sector(
+            directory_sector_lba,
+            verify,
+            disk))
+        return FAT16_WRITE_IO_ERROR;
+
+    bool valid = true;
+
+    for (u32 i = 0; i < 11; ++i) {
+        if (verify[directory_offset + i] != (u8)name[i]) {
+            valid = false;
+            break;
+        }
+    }
+
+    u32 verify_size =
+        (u32)verify[directory_offset + 28] |
+        ((u32)verify[directory_offset + 29] << 8) |
+        ((u32)verify[directory_offset + 30] << 16) |
+        ((u32)verify[directory_offset + 31] << 24);
+
+    u16 verify_cluster =
+        (u16)verify[directory_offset + 26] |
+        ((u16)verify[directory_offset + 27] << 8);
+
+    if (!valid ||
+        verify_size != length ||
+        verify_cluster != free_cluster)
+        return FAT16_WRITE_IO_ERROR;
+
+    return FAT16_WRITE_OK;
+}
+
 int fat16_dir_open(DIR *dir, const char *path) {
     if (!dir || !path)
         return 0;
