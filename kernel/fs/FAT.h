@@ -5,6 +5,21 @@
 
 #define FEPS 128 /* Fat Entries Per Sector (LBA) */
 
+#define FAT16_WRITE_OK         1
+#define FAT16_WRITE_NOT_FOUND  0
+#define FAT16_WRITE_NOT_EMPTY -1
+#define FAT16_WRITE_NO_SPACE  -2
+#define FAT16_WRITE_IO_ERROR  -3
+#define FAT16_WRITE_BAD_FS    -4
+#define FAT16_WRITE_TOO_LARGE -5
+#define FAT16_WRITE_NOT_FILE  -6
+
+int fat16_write_empty_file(
+    const char name[11],
+    const u8 *data,
+    u32 length
+);
+
 typedef struct {
 	/* BPB */
 	u8 jumpcode[3];
