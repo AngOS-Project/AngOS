@@ -156,6 +156,59 @@ bool disk_read_sector(u64 LBA, void *buffer, unsigned int disk) {
     return true;
 }
 
+bool disk_write_sector(
+    u64 LBA,
+    const void *buffer,
+    unsigned int disk
+) {
+    if (!buffer || disk >= 4)
+        return false;
+
+    const u16 *buf = (const u16 *)buffer;
+
+    u16 port = PRIMARY;
+    u8 outcmd = 0x40;
+
+    if (disk >= 2)
+        port = SECOND;
+
+    if (disk % 2)
+        outcmd = 0x50;
+
+    if (!ata_wait_not_busy(port))
+        return false;
+
+    outb(port + DHR, outcmd);
+
+    outb(port + SEC, 0);
+    outb(port + LBALO, (u8)(LBA >> 24));
+    outb(port + LBAMID, (u8)(LBA >> 32));
+    outb(port + LBAHI, (u8)(LBA >> 40));
+
+    outb(port + SEC, 1);
+    outb(port + LBALO, (u8)LBA);
+    outb(port + LBAMID, (u8)(LBA >> 8));
+    outb(port + LBAHI, (u8)(LBA >> 16));
+
+    outb(port + CMD, WRITE);
+
+    if (!ata_wait_not_busy(port))
+        return false;
+
+    if (!ata_wait_drq(port))
+        return false;
+
+    for (u16 i = 0; i < 256; ++i)
+        outw(port + DAT, buf[i]);
+
+    if (!ata_wait_not_busy(port))
+        return false;
+
+    u8 status = inb(port + STS);
+
+    return !(status & (ERROR | DF));
+}
+
 void readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
     u16 *buf = (u16 *)buffer;
 
