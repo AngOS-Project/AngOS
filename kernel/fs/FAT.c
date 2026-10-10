@@ -1461,12 +1461,12 @@ int fat16_replace_file(
                 );
             }
 
-            writesectorpio(
-                cluster_lba + s,
-                1,
-                sector,
-                disk
-            );
+            if (!disk_write_sector(
+                    cluster_lba + s,
+                    sector,
+                    disk
+                ))
+                goto rollback;
 
             if (!disk_read_sector(
                     cluster_lba + s,
@@ -1547,12 +1547,12 @@ int fat16_replace_file(
     sector[directory_offset + 30] = (u8)(length >> 16);
     sector[directory_offset + 31] = (u8)(length >> 24);
 
-    writesectorpio(
-        directory_sector_lba,
-        1,
-        sector,
-        disk
-    );
+    if (!disk_write_sector(
+            cluster_lba + s,
+            sector,
+            disk
+        ))
+        goto rollback;
 
     if (!disk_read_sector(
             directory_sector_lba,
