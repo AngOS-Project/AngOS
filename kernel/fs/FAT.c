@@ -731,7 +731,8 @@ static bool fat16_write_fat_entry_copy(
     sector[pos] = (u8)value;
     sector[pos + 1] = (u8)(value >> 8);
 
-    writesectorpio(lba, 1, sector, disk);
+    if (!disk_write_sector(lba, sector, disk))
+        return false;
 
     if (!disk_read_sector(lba, verify, disk))
         return false;
