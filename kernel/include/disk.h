@@ -41,6 +41,7 @@ extern volume_t *volumes;
 
 bool disk_probe(u64 *blocks);
 bool disk_read_sector(u64 LBA, void *buffer, unsigned int disk);
+bool disk_write_sector(u64 LBA, const void *buffer, unsigned int disk);
 bool fat_probe(unsigned int disk);
 
 #endif
