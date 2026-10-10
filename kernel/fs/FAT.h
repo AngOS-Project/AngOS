@@ -21,6 +21,12 @@ int fat16_write_empty_file(
     u32 length
 );
 
+int fat16_replace_file(
+    const char name[11],
+    const u8 *data,
+    u32 length
+);
+
 typedef struct {
 	/* BPB */
 	u8 jumpcode[3];
