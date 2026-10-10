@@ -481,6 +481,110 @@ static void shell_nw(
     );
 }
 
+static void shell_write(const char *argument) {
+    if (!argument || !argument[0]) {
+        terminal_write(
+            "Usage: write <filename> <text>\n"
+        );
+        return;
+    }
+
+    char filename[13];
+    u32 i = 0;
+
+    while (argument[i] &&
+           argument[i] != ' ' &&
+           i < sizeof(filename) - 1) {
+
+        filename[i] = argument[i];
+        ++i;
+    }
+
+    if (argument[i] && argument[i] != ' ') {
+        terminal_write(
+            "write: invalid filename\n"
+        );
+        return;
+    }
+
+    filename[i] = '\0';
+
+    if (!argument[i]) {
+        terminal_write(
+            "write: missing text\n"
+        );
+        return;
+    }
+
+    const char *text = argument + i;
+
+    while (*text == ' ')
+        ++text;
+
+    if (!*text) {
+        terminal_write(
+            "write: missing text\n"
+        );
+        return;
+    }
+
+    char fat_name[11];
+
+    if (!shell_make_fat83(filename, fat_name)) {
+        terminal_write(
+            "write: invalid 8.3 filename\n"
+        );
+        return;
+    }
+
+    u32 length = 0;
+
+    while (text[length])
+        ++length;
+
+    int result = fat16_write_empty_file(
+        fat_name,
+        (const u8 *)text,
+        length
+    );
+
+    if (result == FAT16_WRITE_OK) {
+        terminal_write("Written ");
+        print_u64_decimal(length);
+        terminal_write(" bytes to ");
+        terminal_write(filename);
+        terminal_write("\n");
+    } else if (result == FAT16_WRITE_NOT_FOUND) {
+        terminal_write(
+            "write: file not found; create it with nw first\n"
+        );
+    } else if (result == FAT16_WRITE_NOT_EMPTY) {
+        terminal_write(
+            "write: file already contains data; overwrite is not supported yet\n"
+        );
+    } else if (result == FAT16_WRITE_NO_SPACE) {
+        terminal_write(
+            "write: no free disk space\n"
+        );
+    } else if (result == FAT16_WRITE_TOO_LARGE) {
+        terminal_write(
+            "write: text is too large for one cluster\n"
+        );
+    } else if (result == FAT16_WRITE_NOT_FILE) {
+        terminal_write(
+            "write: the path is a directory\n"
+        );
+    } else if (result == FAT16_WRITE_BAD_FS) {
+        terminal_write(
+            "write: FAT16 filesystem unavailable\n"
+        );
+    } else {
+        terminal_write(
+            "write: disk operation failed\n"
+        );
+    }
+}
+
 void execute_command(const char *cmd) {
     if (strcmp_local(cmd, "help") == 0) {
 
@@ -530,6 +634,10 @@ void execute_command(const char *cmd) {
 
         terminal_write(
             "  nw       - Create a new file\n"
+        );
+
+        terminal_write(
+            "  write    - Write text to an empty file\n"
         );
 
         terminal_write(
@@ -866,6 +974,18 @@ void execute_command(const char *cmd) {
         shell_nw(
             cmd + 3
         );
+
+    } else if (
+        strcmp_local(cmd, "write") == 0
+    ) {
+
+        shell_write("");
+
+    } else if (
+        starts_with_local(cmd, "write ")
+    ) {
+
+        shell_write(cmd + 6);
 
     } else if (
         strcmp_local(cmd, "fat") == 0
