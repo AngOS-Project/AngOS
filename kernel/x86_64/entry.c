@@ -950,10 +950,14 @@ void execute_command(const char *cmd) {
 
         terminal_write(
             "  nw       - Create a new file\n"
+        ); 
+        
+        terminal_write(
+            "  ec       - Display text in the terminal\n"
         );
 
         terminal_write(
-            "  write    - Write text to an empty file\n"
+            "  ed       - Edit lines in an existing file\n"
         );
 
         terminal_write(
