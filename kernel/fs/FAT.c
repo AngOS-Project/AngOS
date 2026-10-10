@@ -731,53 +731,8 @@ static bool fat16_write_fat_entry_copy(
     sector[pos] = (u8)value;
     sector[pos + 1] = (u8)(value >> 8);
 
-    bool directory_write_ok = disk_write_sector(
-        directory_sector_lba,
-        sector,
-        disk
-    );
-
-    if (!disk_read_sector(
-            directory_sector_lba,
-            verify,
-            disk)) {
-        free(new_clusters);
-        return FAT16_WRITE_IO_ERROR;
-    }
-
-    bool new_entry_valid = true;
-
-    for (u32 i = 0; i < 11; ++i) {
-        if (verify[directory_offset + i] != (u8)name[i]) {
-            new_entry_valid = false;
-            break;
-        }
-    }
-
-    u16 verify_cluster =
-        (u16)verify[directory_offset + 26] |
-        ((u16)verify[directory_offset + 27] << 8);
-
-    u32 verify_size =
-        (u32)verify[directory_offset + 28] |
-        ((u32)verify[directory_offset + 29] << 8) |
-        ((u32)verify[directory_offset + 30] << 16) |
-        ((u32)verify[directory_offset + 31] << 24);
-
-    if (!new_entry_valid ||
-        verify_cluster != first_cluster ||
-        verify_size != length) {
-
-        if (!directory_write_ok &&
-            new_entry_valid &&
-            verify_cluster == old_cluster &&
-            verify_size == old_size) {
-            goto rollback;
-        }
-
-        free(new_clusters);
-        return FAT16_WRITE_IO_ERROR;
-    }
+    if (!disk_write_sector(lba, sector, disk))
+        return false;
 
     if (!disk_read_sector(lba, verify, disk))
         return false;
