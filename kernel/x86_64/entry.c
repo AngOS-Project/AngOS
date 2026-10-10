@@ -492,6 +492,415 @@ static void shell_ec(const char *argument) {
     terminal_write("\n");
 }
 
+#define ED_MAX_FILE_SIZE 16384U
+#define ED_MAX_LINES 8192U
+
+typedef struct {
+    const char *text;
+    u32 length;
+} ed_line_t;
+
+static ed_line_t ed_lines[ED_MAX_LINES + 1];
+
+static void shell_ed(const char *argument) {
+    if (!argument) {
+        terminal_write("ed: missing arguments\n");
+        return;
+    }
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    char filename[13];
+    u32 filename_length = 0;
+
+    while (*argument &&
+           *argument != ' ' &&
+           *argument != '\t') {
+
+        if (filename_length >= sizeof(filename) - 1) {
+            terminal_write("ed: invalid filename\n");
+            return;
+        }
+
+        filename[filename_length++] = *argument++;
+    }
+
+    if (filename_length == 0) {
+        terminal_write(
+            "Usage: ed <filename> <+N|=N|-N> \"text\"\n"
+        );
+        return;
+    }
+
+    filename[filename_length] = '\0';
+
+    char fat_name[11];
+
+    if (!shell_make_fat83(filename, fat_name)) {
+        terminal_write("ed: invalid 8.3 filename\n");
+        return;
+    }
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    if (!*argument) {
+        terminal_write("ed: missing action\n");
+        return;
+    }
+
+    const char *token_start = argument;
+
+    while (*argument &&
+           *argument != ' ' &&
+           *argument != '\t')
+        ++argument;
+
+    const char *token_end = argument;
+    char action = token_start[0];
+
+    if (action != '+' && action != '=' && action != '-') {
+        terminal_write("ed: action must be +, = or -\n");
+        return;
+    }
+
+    u32 line_number = 0;
+    bool has_line_number = false;
+
+    for (const char *p = token_start + 1;
+         p < token_end;
+         ++p) {
+
+        if (*p < '0' || *p > '9') {
+            terminal_write("ed: invalid line number\n");
+            return;
+        }
+
+        u32 digit = (u32)(*p - '0');
+
+        if (line_number > (0xFFFFFFFFU - digit) / 10U) {
+            terminal_write("ed: line number is too large\n");
+            return;
+        }
+
+        line_number = line_number * 10U + digit;
+        has_line_number = true;
+    }
+
+    if (action != '+' && !has_line_number) {
+        terminal_write("ed: this action requires a line number\n");
+        return;
+    }
+
+    argument = token_end;
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    const char *payload = 0;
+    u32 payload_length = 0;
+
+    if (action == '-') {
+        if (*argument) {
+            terminal_write("ed: delete does not take text\n");
+            return;
+        }
+    } else {
+        if (*argument != '"') {
+            terminal_write(
+                "ed: text must be enclosed in double quotes\n"
+            );
+            return;
+        }
+
+        payload = ++argument;
+
+        while (*argument && *argument != '"')
+            ++argument;
+
+        if (*argument != '"') {
+            terminal_write("ed: missing closing quote\n");
+            return;
+        }
+
+        payload_length = (u32)(argument - payload);
+        ++argument;
+
+        while (*argument == ' ' || *argument == '\t')
+            ++argument;
+
+        if (*argument) {
+            terminal_write("ed: unexpected text after closing quote\n");
+            return;
+        }
+    }
+
+    char path[16];
+
+    path[0] = '|';
+    path[1] = 'A';
+    path[2] = '/';
+
+    for (u32 i = 0; i < filename_length; ++i)
+        path[i + 3] = filename[i];
+
+    path[filename_length + 3] = '\0';
+
+    FILE *fp = fopen(path, 0);
+
+    if (!fp) {
+        terminal_write(
+            "ed: file not found; create it with nw first\n"
+        );
+        return;
+    }
+
+    if (fp->size > ED_MAX_FILE_SIZE) {
+        fclose(fp);
+        terminal_write("ed: file exceeds the 16 KiB editor limit\n");
+        return;
+    }
+
+    u32 old_size = (u32)fp->size;
+    u8 *old_data = malloc((size_t)old_size + 1);
+    u8 *new_data = malloc(ED_MAX_FILE_SIZE + 1);
+
+    const char *message = 0;
+    bool saved = false;
+
+    if (!old_data || !new_data) {
+        message = "ed: not enough memory\n";
+        goto cleanup;
+    }
+
+    u32 loaded = 0;
+
+    while (loaded < old_size) {
+        size_t count = fread(
+            old_data + loaded,
+            old_size - loaded,
+            fp
+        );
+
+        if (count == 0)
+            break;
+
+        loaded += (u32)count;
+    }
+
+    fclose(fp);
+    fp = 0;
+
+    if (loaded != old_size) {
+        message = "ed: unable to read the whole file\n";
+        goto cleanup;
+    }
+
+    old_data[old_size] = '\0';
+
+    bool had_final_newline =
+        old_size > 0 && old_data[old_size - 1] == '\n';
+
+    u32 line_count = 0;
+    u32 start = 0;
+
+    for (u32 i = 0; i < old_size; ++i) {
+        if (old_data[i] != '\n')
+            continue;
+
+        if (line_count >= ED_MAX_LINES) {
+            message = "ed: file contains too many lines\n";
+            goto cleanup;
+        }
+
+        ed_lines[line_count].text =
+            (const char *)old_data + start;
+
+        ed_lines[line_count].length = i - start;
+
+        ++line_count;
+        start = i + 1;
+    }
+
+    if (start < old_size) {
+        if (line_count >= ED_MAX_LINES) {
+            message = "ed: file contains too many lines\n";
+            goto cleanup;
+        }
+
+        ed_lines[line_count].text =
+            (const char *)old_data + start;
+
+        ed_lines[line_count].length = old_size - start;
+
+        ++line_count;
+    }
+
+    if (action == '+') {
+        if (line_count >= ED_MAX_LINES) {
+            message = "ed: maximum line count reached\n";
+            goto cleanup;
+        }
+
+        u32 index;
+
+        if (!has_line_number) {
+            index = line_count;
+        } else if (line_number == 0) {
+            index = 0;
+        } else {
+            index = line_number - 1;
+        }
+
+        if (index > line_count)
+            index = line_count;
+
+        for (u32 i = line_count; i > index; --i)
+            ed_lines[i] = ed_lines[i - 1];
+
+        ed_lines[index].text = payload;
+        ed_lines[index].length = payload_length;
+
+        ++line_count;
+    }
+
+    else if (action == '=') {
+        if (line_count == 0 && line_number == 1) {
+            ed_lines[0].text = payload;
+            ed_lines[0].length = payload_length;
+            line_count = 1;
+            had_final_newline = false;
+        } else {
+            if (line_number == 0 || line_number > line_count) {
+                message =
+                    "ed: line does not exist; use + to append\n";
+                goto cleanup;
+            }
+
+            ed_lines[line_number - 1].text = payload;
+            ed_lines[line_number - 1].length = payload_length;
+        }
+    }
+
+    else {
+        if (line_number == 0 || line_number > line_count) {
+            message =
+                "ed: line does not exist; file unchanged\n";
+            goto cleanup;
+        }
+
+        u32 index = line_number - 1;
+
+        for (u32 i = index; i + 1 < line_count; ++i)
+            ed_lines[i] = ed_lines[i + 1];
+
+        --line_count;
+
+        if (line_count == 0)
+            had_final_newline = false;
+    }
+
+    bool output_final_newline =
+        line_count > 0 &&
+        (had_final_newline ||
+         ed_lines[line_count - 1].length == 0);
+
+    u32 new_size = 0;
+
+    for (u32 i = 0; i < line_count; ++i) {
+        if (i != 0) {
+            if (new_size >= ED_MAX_FILE_SIZE) {
+                message = "ed: edited file exceeds 16 KiB\n";
+                goto cleanup;
+            }
+
+            ++new_size;
+        }
+
+        if (ed_lines[i].length >
+            ED_MAX_FILE_SIZE - new_size) {
+
+            message = "ed: edited file exceeds 16 KiB\n";
+            goto cleanup;
+        }
+
+        new_size += ed_lines[i].length;
+    }
+
+    if (output_final_newline) {
+        if (new_size >= ED_MAX_FILE_SIZE) {
+            message = "ed: edited file exceeds 16 KiB\n";
+            goto cleanup;
+        }
+
+        ++new_size;
+    }
+
+    u32 output_offset = 0;
+
+    for (u32 i = 0; i < line_count; ++i) {
+        if (i != 0)
+            new_data[output_offset++] = '\n';
+
+        if (ed_lines[i].length != 0) {
+            memcpy(
+                new_data + output_offset,
+                ed_lines[i].text,
+                ed_lines[i].length
+            );
+
+            output_offset += ed_lines[i].length;
+        }
+    }
+
+    if (output_final_newline)
+        new_data[output_offset++] = '\n';
+
+    {
+        int result = fat16_replace_file(
+            fat_name,
+            new_data,
+            output_offset
+        );
+
+        if (result == FAT16_WRITE_OK) {
+            saved = true;
+        } else if (result == FAT16_WRITE_NOT_FOUND) {
+            message = "ed: file not found\n";
+        } else if (result == FAT16_WRITE_NO_SPACE) {
+            message = "ed: not enough disk space\n";
+        } else if (result == FAT16_WRITE_NO_MEMORY) {
+            message = "ed: not enough memory for disk operation\n";
+        } else if (result == FAT16_WRITE_BAD_FS) {
+            message = "ed: FAT16 filesystem unavailable\n";
+        } else if (result == FAT16_WRITE_NOT_FILE) {
+            message = "ed: target is not a file\n";
+        } else {
+            message = "ed: saving the edited file failed\n";
+        }
+    }
+
+cleanup:
+    if (fp)
+        fclose(fp);
+
+    if (old_data)
+        free(old_data);
+
+    if (new_data)
+        free(new_data);
+
+    if (message)
+        terminal_write(message);
+
+    if (saved) {
+        terminal_write("ed: saved ");
+        terminal_write(filename);
+        terminal_write("\n");
+    }
+}
+
 void execute_command(const char *cmd) {
     if (strcmp_local(cmd, "help") == 0) {
 
