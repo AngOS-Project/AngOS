@@ -3,6 +3,7 @@
 #include <cpu/IO.h>
 #include <disk.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "../fs/FAT.h"
 
