@@ -13,6 +13,7 @@
 #define FAT16_WRITE_BAD_FS    -4
 #define FAT16_WRITE_TOO_LARGE -5
 #define FAT16_WRITE_NOT_FILE  -6
+#define FAT16_WRITE_NO_MEMORY -7
 
 int fat16_write_empty_file(
     const char name[11],
