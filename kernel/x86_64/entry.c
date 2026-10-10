@@ -1296,16 +1296,28 @@ void execute_command(const char *cmd) {
         );
 
     } else if (
-        strcmp_local(cmd, "write") == 0
+        strcmp_local(cmd, "ec") == 0
     ) {
 
-        shell_write("");
+        shell_ec("");
 
     } else if (
-        starts_with_local(cmd, "write ")
+        starts_with_local(cmd, "ec ")
     ) {
 
-        shell_write(cmd + 6);
+        shell_ec(cmd + 3);
+
+    } else if (
+        strcmp_local(cmd, "ed") == 0
+    ) {
+
+        shell_ed("");
+
+    } else if (
+        starts_with_local(cmd, "ed ")
+    ) {
+
+        shell_ed(cmd + 3);
 
     } else if (
         strcmp_local(cmd, "fat") == 0
