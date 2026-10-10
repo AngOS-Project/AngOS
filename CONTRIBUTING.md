@@ -192,4 +192,4 @@ Before submitting a Pull Request, please check:
 
 Whether you contribute code, documentation, testing, bug reports, ideas, or feedback, **thank you for helping AngOS grow.**
 
-Every contribution is appreciated.
+Every contribution is appreciated!
