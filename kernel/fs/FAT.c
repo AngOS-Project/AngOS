@@ -1116,9 +1116,8 @@ int fat16_write_empty_file(
     sector[directory_offset + 30] = (u8)(length >> 16);
     sector[directory_offset + 31] = (u8)(length >> 24);
 
-    writesectorpio(
+    bool directory_write_ok = disk_write_sector(
         directory_sector_lba,
-        1,
         sector,
         disk
     );
