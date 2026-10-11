@@ -1578,6 +1578,13 @@ int fat16_replace_file(
         verify_cluster != first_cluster ||
         verify_size != length) {
 
+        if (!directory_write_ok &&
+            new_entry_valid &&
+            verify_cluster == old_cluster &&
+            verify_size == old_size) {
+            goto rollback;
+        }
+
         free(new_clusters);
         return FAT16_WRITE_IO_ERROR;
     }
