@@ -1116,6 +1116,13 @@ int fat16_write_empty_file(
     sector[directory_offset + 30] = (u8)(length >> 16);
     sector[directory_offset + 31] = (u8)(length >> 24);
 
+    if (!disk_write_sector(
+            directory_sector_lba,
+            sector,
+            disk))
+        return FAT16_WRITE_IO_ERROR;
+
+
     bool directory_write_ok = disk_write_sector(
         directory_sector_lba,
         sector,
