@@ -1426,6 +1426,9 @@ int fat16_replace_file(
         if (fat_sector_index == 0)
             terminal_write("FATTRACE: reading first FAT scan sector\n");
 
+        if (fat_sector_index == 1)
+            terminal_write("FATTRACE: reading second FAT sector\n");
+
         if (!disk_read_sector(
                 fat_lba + fat_sector_index,
                 sector,
@@ -1434,6 +1437,9 @@ int fat16_replace_file(
             free(new_clusters);
             return FAT16_WRITE_IO_ERROR;
         }
+
+        if (fat_sector_index == 1)
+            terminal_write("FATTRACE: second FAT sector read\n");
 
         if (fat_sector_index == 0)
             terminal_write("FATTRACE: first FAT scan sector read\n");
@@ -1463,6 +1469,9 @@ int fat16_replace_file(
         if ((fat_sector_index + 1) % 16 == 0)
             terminal_write("FATTRACE: scanned 16 more FAT sectors\n");
 
+        if (fat_sector_index == 0)
+            terminal_write("FATTRACE: starting first-sector entry scan\n");
+
         for (u32 entry_index = 0;
              entry_index < 256 &&
              allocated_count < required_clusters;
@@ -1485,9 +1494,15 @@ int fat16_replace_file(
             if (value != 0)
                 continue;
 
+            if (fat_sector_index == 0)
+                terminal_write("FATTRACE: primary FAT has a free candidate\n");
+
             bool is_free = true;
 
             for (u32 copy = 1; copy < fat_count; ++copy) {
+                if (fat_sector_index == 0)
+                    terminal_write("FATTRACE: checking candidate in mirror memory\n");
+
                 const u8 *mirror =
                     mirror_fat_sectors + (size_t)(copy - 1) * 512;
 
@@ -1501,12 +1516,26 @@ int fat16_replace_file(
                 }
             }
 
-            if (is_free)
+            if (fat_sector_index == 0)
+                terminal_write("FATTRACE: candidate mirror check finished\n");
+
+            if (is_free) {
                 new_clusters[allocated_count++] = (u16)cluster;
+                if (fat_sector_index == 0)
+                    terminal_write("FATTRACE: free cluster accepted\n");
+            }
         }
+
+        if (fat_sector_index == 0)
+            terminal_write("FATTRACE: finished first-sector entry scan\n");
+
+        if (fat_sector_index == 1)
+            terminal_write("FATTRACE: finished second-sector entry scan\n");
     }
 
+    terminal_write("FATTRACE: cluster scan loop ended\n");
     free(mirror_fat_sectors);
+    terminal_write("FATTRACE: mirror buffer freed\n");
 
     if (allocated_count != required_clusters) {
         free(new_clusters);
