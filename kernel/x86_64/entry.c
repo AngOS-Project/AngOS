@@ -714,7 +714,7 @@ static void shell_ed(const char *argument) {
 
     if (filename_length == 0) {
         terminal_write(
-            "Usage: ed <filename> <+N|=N|-N> \"text\"\n"
+            "Usage: ed <file> +N text | + text | +0 text | =N text | -N\n"
         );
         return;
     }
@@ -798,41 +798,71 @@ static void shell_ed(const char *argument) {
 
     argument = number_end;
 
+    /* Skip spaces after the action/line number. */
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
     const char *payload = 0;
     u32 payload_length = 0;
 
     if (action == '-') {
         if (*argument) {
-            terminal_write("ed: delete does not take text\n");
-            return;
-        }
-    } else {
-        if (*argument != '"') {
             terminal_write(
-                "ed: text must be enclosed in double quotes\n"
+                "ed: delete takes no text; example: ed notes.txt -1\n"
             );
             return;
         }
+    } else {
+        if (*argument == '"') {
+            /* Quoted text: preserve spaces inside the quotes. */
+            payload = ++argument;
 
-        payload = ++argument;
+            while (*argument && *argument != '"')
+                ++argument;
 
-        while (*argument && *argument != '"')
+            if (*argument != '"') {
+                terminal_write(
+                    "ed: missing closing quote; use \"text\" or plain text\n"
+                );
+                return;
+            }
+
+            payload_length = (u32)(argument - payload);
             ++argument;
 
-        if (*argument != '"') {
-            terminal_write("ed: missing closing quote\n");
-            return;
-        }
+            while (*argument == ' ' || *argument == '\t')
+                ++argument;
 
-        payload_length = (u32)(argument - payload);
-        ++argument;
+            if (*argument) {
+                terminal_write(
+                    "ed: unexpected text after closing quote\n"
+                );
+                return;
+            }
+        } else {
+            /*
+             * Plain text: quotes are optional.
+             * Keep internal spaces and trim trailing spaces/tabs.
+             */
+            payload = argument;
+            const char *payload_end = argument;
 
-        while (*argument == ' ' || *argument == '\t')
-            ++argument;
+            while (*payload_end)
+                ++payload_end;
 
-        if (*argument) {
-            terminal_write("ed: unexpected text after closing quote\n");
-            return;
+            while (payload_end > payload &&
+                   (payload_end[-1] == ' ' ||
+                    payload_end[-1] == '\t'))
+                --payload_end;
+
+            payload_length = (u32)(payload_end - payload);
+
+            if (payload_length == 0) {
+                terminal_write(
+                    "ed: missing text; use \"\" for an empty line\n"
+                );
+                return;
+            }
         }
     }
 
@@ -1115,79 +1145,133 @@ static void shell_help(const char *topic) {
         ++topic;
 
     if (!*topic) {
-        terminal_write("AngOS Commands (use h <command> for details)\n");
-        terminal_write("  h/help [command]   Show general or command-specific help\n");
-        terminal_write("  cls                Clear the terminal\n");
-        terminal_write("  ver                Show AngOS version\n");
-        terminal_write("  disk               Detect the primary disk\n");
-        terminal_write("  diskread           Read sector zero\n");
-        terminal_write("  diskinit           Initialize disk and filesystem tables\n");
-        terminal_write("  fstest             Test file reading\n");
-        terminal_write("  ls [directory]     List a directory\n");
-        terminal_write("  cat <file>         Display a file\n");
-        terminal_write("  stat <path>        Show file or directory information\n");
-        terminal_write("  nw <filename>      Create a new empty file\n");
-        terminal_write("  ec <text>          Display text in the terminal\n");
-        terminal_write("  ed <file> ...      Insert, replace, or delete a line\n");
-        terminal_write("  cp <source> <dest> Copy a file into a root-directory filename\n");
-        terminal_write("  fat                Detect the filesystem type\n");
-        terminal_write("  reboot             Reboot AngOS\n");
+        terminal_write("AngOS command guide: use h <name> for details\n");
+        terminal_write("  h [name]       Help; also available as help\n");
+        terminal_write("  cls            Clear the screen\n");
+        terminal_write("  ver            Show the OS version\n");
+        terminal_write("  disk           Probe the primary disk\n");
+        terminal_write("  diskread       Read disk sector zero\n");
+        terminal_write("  diskinit       Initialize disk/filesystem tables\n");
+        terminal_write("  fstest         Test the file-reading API\n");
+        terminal_write("  ls [path]      List a directory\n");
+        terminal_write("  ct <file>      Display a file's readable contents\n");
+        terminal_write("  stat <path>    Show a file's type and size\n");
+        terminal_write("  nw <file>      Create a new empty file\n");
+        terminal_write("  ec <text>      Echo text to the terminal\n");
+        terminal_write("  ed <file> ...  Edit a file one line at a time\n");
+        terminal_write("  cp <src> <dst> Copy a file\n");
+        terminal_write("  fat            Detect the FAT filesystem type\n");
+        terminal_write("  fatls          Legacy FAT directory listing\n");
+        terminal_write("  fatcat <file>  Legacy FAT file reader\n");
+        terminal_write("  reboot         Restart the machine\n");
+        terminal_write("Names: nw=new, ec=echo, ed=edit, cp=copy, stat=status\n");
+        terminal_write("ct is the compact form of cat, meaning concatenate.\n");
+        terminal_write("Try: h ed, h ct, h nw, h ec, h cp, h disk\n");
         return;
     }
 
     if (strcmp_local(topic, "h") == 0 ||
         strcmp_local(topic, "help") == 0) {
-        terminal_write("h [command]: show the command list or details for one command\n");
-        terminal_write("Examples: h ed, h nw, h cp, h ls\n");
+        terminal_write("h [name]: show the command list or help for one command.\n");
+        terminal_write("Examples: h ed, h ct, h nw, h cp\n");
+
     } else if (strcmp_local(topic, "cls") == 0) {
-        terminal_write("cls: clear the terminal screen\n");
+        terminal_write("cls = clear screen. Clears the terminal display.\n");
+
     } else if (strcmp_local(topic, "ver") == 0) {
-        terminal_write("ver: display the AngOS kernel version\n");
+        terminal_write("ver = version. Prints the AngOS kernel version.\n");
+
     } else if (strcmp_local(topic, "disk") == 0) {
-        terminal_write("disk: probe the primary ATA disk and report its sector count\n");
+        terminal_write("disk: probe the primary ATA disk and report its sector count.\n");
+        terminal_write("Use diskread to inspect sector zero or diskinit to initialize tables.\n");
+
     } else if (strcmp_local(topic, "diskread") == 0) {
-        terminal_write("diskread: read sector zero and display its boot signature\n");
+        terminal_write("diskread = disk read. Reads sector zero and displays its boot signature.\n");
+        terminal_write("This is a diagnostic read; it does not intentionally modify the disk.\n");
+
     } else if (strcmp_local(topic, "diskinit") == 0) {
-        terminal_write("diskinit: initialize disk, partition, and filesystem tables\n");
+        terminal_write("diskinit = disk initialize. Initializes disk and partition tables.\n");
+        terminal_write("It also reports the detected filesystem type when available.\n");
+
     } else if (strcmp_local(topic, "fstest") == 0) {
-        terminal_write("fstest: exercise the FILE API by opening and reading the bootloader file\n");
+        terminal_write("fstest = filesystem test. Tests opening and reading the bootloader file.\n");
+        terminal_write("Use it to diagnose file-reading problems.\n");
+
     } else if (strcmp_local(topic, "ls") == 0) {
-        terminal_write("ls [directory]: list the root directory or a path relative to volume A\n");
+        terminal_write("ls = list. Lists the root directory, or a directory you specify.\n");
         terminal_write("Example: ls EFI/BOOT\n");
-    } else if (strcmp_local(topic, "cat") == 0) {
-        terminal_write("cat <file>: display the contents of a file\n");
-        terminal_write("Example: cat notes.txt\n");
+
+    } else if (strcmp_local(topic, "ct") == 0) {
+        terminal_write("ct: compact form of cat, which stands for concatenate.\n");
+        terminal_write("Displays readable text from a file without editing it.\n");
+        terminal_write("Usage: ct <file>\n");
+        terminal_write("Example: ct notes.txt\n");
+
     } else if (strcmp_local(topic, "stat") == 0) {
-        terminal_write("stat <path>: display whether the path is a file or directory and show file size\n");
+        terminal_write("stat = status. Shows whether a path is a file or directory.\n");
+        terminal_write("For files, it also reports the size in bytes.\n");
+        terminal_write("Example: stat notes.txt\n");
+
     } else if (strcmp_local(topic, "nw") == 0) {
-        terminal_write("nw <filename>: create an empty FAT 8.3 file in the root directory\n");
+        terminal_write("nw = new. Creates a new, empty file in the volume A root directory.\n");
+        terminal_write("The filename must use the supported FAT 8.3 format.\n");
         terminal_write("Example: nw notes.txt\n");
+        terminal_write("Create a file before trying to edit it with ed.\n");
+
     } else if (strcmp_local(topic, "ec") == 0) {
-        terminal_write("ec <text>: print text in the terminal; it does not write a file\n");
+        terminal_write("ec = echo. Prints the text you provide to the terminal.\n");
+        terminal_write("It does not write the text into a file.\n");
+        terminal_write("Example: ec Hello from AngOS\n");
+
     } else if (strcmp_local(topic, "ed") == 0) {
-        terminal_write("ed <file> +N \"text\": insert text before line N\n");
-        terminal_write("ed <file> + \"text\": append a line\n");
-        terminal_write("ed <file> +0 \"text\": insert at the beginning\n");
-        terminal_write("ed <file> =N \"text\": replace line N\n");
-        terminal_write("ed <file> -N: delete line N\n");
-        terminal_write("A space before N is also accepted. Line numbers start at 1; range editing is not available yet.\n");
-        terminal_write("Example: ed notes.txt = 1 \"replacement\"\n");
+        terminal_write("ed = edit. Changes one line of an existing file per command.\n");
+        terminal_write("Syntax: ed <file> +N <text>  Insert BEFORE line N\n");
+        terminal_write("Syntax: ed <file> + <text>   Append a line at the end\n");
+        terminal_write("Syntax: ed <file> +0 <text>  Insert at the beginning\n");
+        terminal_write("Syntax: ed <file> =N <text>  Replace line N\n");
+        terminal_write("Syntax: ed <file> -N         Delete line N\n");
+        terminal_write("Line numbers normally start at 1. +0 means the beginning.\n");
+        terminal_write("Spaces between the action and number are allowed too.\n");
+        terminal_write("For example, + 1 and +1 both insert before line 1.\n");
+        terminal_write("Plain text needs no quotes: ed notes.txt +1 hello there\n");
+        terminal_write("Quotes are optional; quoted text preserves inner spaces.\n");
+        terminal_write("Use empty quotes to create an empty line: ed notes.txt +1 \"\"\n");
+        terminal_write("Examples:\n");
+        terminal_write("  ed notes.txt + First line\n");
+        terminal_write("  ed notes.txt +2 A new second line\n");
+        terminal_write("  ed notes.txt =1 Updated first line\n");
+        terminal_write("  ed notes.txt -1\n");
+        terminal_write("The -N action accepts no text and deletes that numbered line.\n");
+        terminal_write("The +N action inserts before N; +0 inserts at the start.\n");
+        terminal_write("A +N beyond the end appends. =N replaces an existing line.\n");
+        terminal_write("Create files with nw first. Files are limited to 16 KiB.\n");
+        terminal_write("The editor handles one line per command; no ranges or multi-line editing yet.\n");
+
     } else if (strcmp_local(topic, "cp") == 0) {
-        terminal_write("cp <source-file> <destination-name>: copy a file into the root directory\n");
+        terminal_write("cp = copy. Copies a file to a new root-directory filename.\n");
+        terminal_write("Usage: cp <source-file> <destination-name>\n");
         terminal_write("Example: cp notes.txt backup.txt\n");
-        terminal_write("Source files may be in a subdirectory. Destination must be an 8.3 root filename.\n");
-        terminal_write("Recursive directory copies are not available yet.\n");
+        terminal_write("The source may be in a subdirectory, but the destination must be a root filename.\n");
+        terminal_write("The destination must use the supported FAT 8.3 naming format.\n");
+        terminal_write("Recursive directory copying is not supported yet.\n");
+
     } else if (strcmp_local(topic, "fat") == 0) {
-        terminal_write("fat: detect and display the supported FAT filesystem type\n");
-    } else if (strcmp_local(topic, "reboot") == 0) {
-        terminal_write("reboot: reboot the machine\n");
+        terminal_write("fat: detects and reports the supported FAT filesystem type.\n");
+
     } else if (strcmp_local(topic, "fatls") == 0) {
-        terminal_write("fatls: legacy FAT16 root listing used for diagnostics; use ls normally\n");
+        terminal_write("fatls: legacy FAT16 root-directory listing retained for diagnostics.\n");
+        terminal_write("Use ls for normal directory listings.\n");
+
     } else if (strcmp_local(topic, "fatcat") == 0) {
-        terminal_write("fatcat <file>: legacy FAT16 file reader used for diagnostics; use cat normally\n");
+        terminal_write("fatcat: legacy FAT16 file reader retained for diagnostics.\n");
+        terminal_write("Use ct for normal file display.\n");
+
+    } else if (strcmp_local(topic, "reboot") == 0) {
+        terminal_write("reboot: asks the machine to restart. Save any work first.\n");
+
     } else {
-        terminal_write("h: no help is available for that command\n");
-        terminal_write("Run h to see the command list\n");
+        terminal_write("No detailed help exists for that name.\n");
+        terminal_write("Run h to list commands, or h ed for editor examples.\n");
     }
 }
 
@@ -1422,12 +1506,16 @@ void execute_command(const char *cmd) {
 
         shell_ls(cmd + 3);
 
+    } else if (strcmp_local(cmd, "ct") == 0) {
+
+        terminal_write("Usage: ct <file>\\n");
+
     } else if (
-        starts_with_local(cmd, "cat ")
+        starts_with_local(cmd, "ct ")
     ) {
 
         const char *name =
-            cmd + 4;
+            cmd + 3;
 
         char path[128];
 
@@ -1454,7 +1542,7 @@ void execute_command(const char *cmd) {
         if (!fp) {
 
             terminal_write(
-                "cat: file not found\n"
+                "ct: file not found\n"
             );
 
         } else {
