@@ -12,9 +12,12 @@
 #include <globals.h>
 #include <keyboard.h>
 #include <disk.h>
+#include <diagnostics.h>
 #include "init.h"
 
 void init(tosaithe_loader_data *loader_data) {
+        diagnostics_init();
+        diagnostics_log("Boot: kernel init entered.");
         if (!loader_data || !loader_data->kern_map) {
                 return;
         }
@@ -51,25 +54,32 @@ void init(tosaithe_loader_data *loader_data) {
         kernel_size = highest_vaddr - lowest_vaddr;
 
         terminal_init();
+        diagnostics_log("Boot: framebuffer console initialized.");
 
         terminal_write("ANGOS KERNEL STARTED\n");
         terminal_write("PHYSICAL MEMORY INITIALIZING\n");
 
         phys_memory_init(loader_data);
+        diagnostics_log("Boot: initializing physical memory.");
         terminal_write("PHYSICAL MEMORY OK\n");
 
         init_gdt();
+        diagnostics_log("Boot: GDT initialized.");
         terminal_write("GDT OK\n");
 
         init_idt();
+        diagnostics_log("Boot: IDT initialized.");
         terminal_write("IDT OK\n");
 
         init_memory();
+        diagnostics_log("Boot: paging initialization returned.");
         terminal_write("PAGING OK\n");
 
         keyboard_init();
+        diagnostics_log("Boot: keyboard initialized.");
 
         init_timer();
+        diagnostics_log("Boot: timer initialized.");
         terminal_write("PIT OK\n");
 
         void *test = malloc(8192);
@@ -84,7 +94,9 @@ void init(tosaithe_loader_data *loader_data) {
 
         terminal_write("DISK INITIALIZING\n");
 
+        diagnostics_log("Boot: initializing disk/filesystem.");
         init_disk();
+        diagnostics_log("Boot: disk initialization returned.");
 
         if (disktable &&
             disktable[0].parts[0].fs != none) {
@@ -101,6 +113,7 @@ void init(tosaithe_loader_data *loader_data) {
                 terminal_write("DISK FILESYSTEM FAILED\n");
         }
 
+        diagnostics_log("Boot: kernel initialization complete.");
         terminal_write("ANGOS IS RUNNING\n");
 
         __asm__ volatile("sti");

@@ -19,6 +19,7 @@ UEFI := $(BUILD)/AngOS.efi
 
 KERNEL_C := \
     kernel/x86_64/init.c \
+    kernel/x86_64/diagnostics.c \
     kernel/x86_64/entry.c \
     kernel/x86_64/cpu/GDT/GDT.c \
     kernel/x86_64/cpu/ints/IDT.c \
@@ -89,6 +90,7 @@ deploy: all
 
 run: deploy
 	/mingw64/bin/qemu-system-x86_64.exe \
+		-serial file:angos-serial.log \
 		-drive if=pflash,format=raw,readonly=on,file=/mingw64/share/qemu/edk2-x86_64-code.fd \
 		-drive if=pflash,format=raw,file=qemu/UEFI_VARS.fd \
 		-drive format=raw,file=fat:rw:qemu \

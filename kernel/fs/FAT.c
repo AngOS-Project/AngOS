@@ -1910,10 +1910,9 @@ rollback:
 }
 
 int fat16_delete_file(const char name[11]) {
-    if (!name)
-        return FAT16_WRITE_BAD_FS;
+    diagnostics_log("rm: FAT16 delete routine entered.");
 
-    if (!disktable || !volumes ||
+    if (!name || !disktable || !volumes ||
         disktable[0].parts[0].fs != fat16)
         return FAT16_WRITE_BAD_FS;
 
@@ -1922,10 +1921,7 @@ int fat16_delete_file(const char name[11]) {
     if (fat_detect(disk) != 16)
         return FAT16_WRITE_BAD_FS;
 
-    u8 mbr[512];
-    u8 boot[512];
-    u8 sector[512];
-    u8 verify[512];
+    u8 mbr[512], boot[512], sector[512], verify[512];
 
     if (!disk_read_sector(0, mbr, disk))
         return FAT16_WRITE_IO_ERROR;
@@ -1934,32 +1930,27 @@ int fat16_delete_file(const char name[11]) {
         return FAT16_WRITE_BAD_FS;
 
     u32 partition_lba =
-        (u32)mbr[446 + 8] |
-        ((u32)mbr[446 + 9] << 8) |
-        ((u32)mbr[446 + 10] << 16) |
-        ((u32)mbr[446 + 11] << 24);
+        (u32)mbr[454] |
+        ((u32)mbr[455] << 8) |
+        ((u32)mbr[456] << 16) |
+        ((u32)mbr[457] << 24);
 
     if (!disk_read_sector(partition_lba, boot, disk))
         return FAT16_WRITE_IO_ERROR;
 
     u16 bytes_per_sector =
         (u16)boot[11] | ((u16)boot[12] << 8);
-
     u8 sectors_per_cluster = boot[13];
-
     u16 reserved_sectors =
         (u16)boot[14] | ((u16)boot[15] << 8);
-
     u8 fat_count = boot[16];
-
     u16 root_entries =
         (u16)boot[17] | ((u16)boot[18] << 8);
-
     u16 sectors_per_fat =
         (u16)boot[22] | ((u16)boot[23] << 8);
 
     u32 total_sectors =
-        (u16)boot[19] | ((u32)boot[20] << 8);
+        (u32)boot[19] | ((u32)boot[20] << 8);
 
     if (total_sectors == 0) {
         total_sectors =
@@ -1980,13 +1971,10 @@ int fat16_delete_file(const char name[11]) {
 
     u32 root_sectors =
         ((u32)root_entries * 32 + 511) / 512;
-
     u32 fat_lba =
         partition_lba + reserved_sectors;
-
     u32 root_lba =
         fat_lba + (u32)fat_count * sectors_per_fat;
-
     u32 metadata_sectors =
         (u32)reserved_sectors +
         (u32)fat_count * sectors_per_fat +
@@ -1995,13 +1983,9 @@ int fat16_delete_file(const char name[11]) {
     if (total_sectors <= metadata_sectors)
         return FAT16_WRITE_BAD_FS;
 
-    u32 data_lba =
-        partition_lba + metadata_sectors;
-
     u32 cluster_count =
         (total_sectors - metadata_sectors) /
         sectors_per_cluster;
-
     u32 max_cluster = cluster_count + 1;
 
     if (max_cluster > 0xFFEF)
@@ -2019,30 +2003,24 @@ int fat16_delete_file(const char name[11]) {
     if (max_cluster < 2)
         return FAT16_WRITE_BAD_FS;
 
-    /*
-     * Search only the FAT16 root directory. This matches the
-     * current root-file creation and replacement operations.
-     */
+    diagnostics_log("rm: scanning FAT16 root directory.");
+
     bool found = false;
     bool end_of_directory = false;
-
-    u32 directory_sector_lba = 0;
-    u32 directory_offset = 0;
-    u8 directory_entry[32];
-
+    u32 dir_lba = 0;
+    u32 dir_off = 0;
     u32 entries_seen = 0;
+    u8 dir_entry[32];
 
     for (u32 s = 0;
          s < root_sectors && !found && !end_of_directory;
          ++s) {
-
         if (!disk_read_sector(root_lba + s, sector, disk))
             return FAT16_WRITE_IO_ERROR;
 
         for (u32 off = 0;
              off < 512 && entries_seen < root_entries;
              off += 32, ++entries_seen) {
-
             u8 first = sector[off];
 
             if (first == 0x00) {
@@ -2055,12 +2033,10 @@ int fat16_delete_file(const char name[11]) {
 
             u8 attr = sector[off + 11];
 
-            /* Ignore long-name entries and volume labels. */
             if (attr == 0x0F || (attr & 0x08))
                 continue;
 
             bool same = true;
-
             for (u32 i = 0; i < 11; ++i) {
                 if (sector[off + i] != (u8)name[i]) {
                     same = false;
@@ -2069,14 +2045,9 @@ int fat16_delete_file(const char name[11]) {
             }
 
             if (same) {
-                memcpy(
-                    directory_entry,
-                    &sector[off],
-                    sizeof(directory_entry)
-                );
-
-                directory_sector_lba = root_lba + s;
-                directory_offset = off;
+                memcpy(dir_entry, &sector[off], 32);
+                dir_lba = root_lba + s;
+                dir_off = off;
                 found = true;
                 break;
             }
@@ -2086,231 +2057,159 @@ int fat16_delete_file(const char name[11]) {
     if (!found)
         return FAT16_WRITE_NOT_FOUND;
 
-    if (directory_entry[11] & 0x10)
+    if (dir_entry[11] & 0x10)
         return FAT16_WRITE_NOT_FILE;
 
+    diagnostics_log("rm: file located; validating FAT chain.");
+
     u16 first_cluster =
-        (u16)directory_entry[26] |
-        ((u16)directory_entry[27] << 8);
-
+        (u16)dir_entry[26] | ((u16)dir_entry[27] << 8);
     u16 high_cluster =
-        (u16)directory_entry[20] |
-        ((u16)directory_entry[21] << 8);
-
+        (u16)dir_entry[20] | ((u16)dir_entry[21] << 8);
     u32 file_size =
-        (u32)directory_entry[28] |
-        ((u32)directory_entry[29] << 8) |
-        ((u32)directory_entry[30] << 16) |
-        ((u32)directory_entry[31] << 24);
+        (u32)dir_entry[28] |
+        ((u32)dir_entry[29] << 8) |
+        ((u32)dir_entry[30] << 16) |
+        ((u32)dir_entry[31] << 24);
 
     if (high_cluster != 0)
         return FAT16_WRITE_BAD_FS;
 
-    if (first_cluster == 0 && file_size != 0)
+    u32 bytes_per_cluster =
+        (u32)sectors_per_cluster * 512;
+
+    u32 needed = file_size / bytes_per_cluster;
+    if (file_size % bytes_per_cluster)
+        ++needed;
+
+    if (needed > max_cluster - 1)
         return FAT16_WRITE_BAD_FS;
 
-    if (first_cluster != 0 &&
-        (first_cluster < 2 || first_cluster > max_cluster))
+    if (needed == 0) {
+        if (first_cluster != 0)
+            return FAT16_WRITE_BAD_FS;
+    } else if (first_cluster < 2 || first_cluster > max_cluster) {
         return FAT16_WRITE_BAD_FS;
-
-    /*
-     * Validate and record every cluster before changing the
-     * directory. A bitmap detects loops in damaged FAT chains.
-     */
-    u16 *clusters = 0;
-    u8 *seen = 0;
-    u32 chain_length = 0;
-    u32 chain_capacity = max_cluster - 1;
-
-    if (first_cluster >= 2) {
-        clusters = malloc(
-            (size_t)chain_capacity * sizeof(u16)
-        );
-
-        size_t seen_size =
-            (size_t)(max_cluster + 8U) / 8U;
-
-        seen = malloc(seen_size);
-
-        if (!clusters || !seen) {
-            if (clusters)
-                free(clusters);
-            if (seen)
-                free(seen);
-            return FAT16_WRITE_NO_MEMORY;
-        }
-
-        memset(seen, 0, seen_size);
-
-        u16 current = first_cluster;
-
-        for (;;) {
-            if (current < 2 ||
-                current > max_cluster ||
-                chain_length >= chain_capacity) {
-
-                free(clusters);
-                free(seen);
-                return FAT16_WRITE_BAD_FS;
-            }
-
-            u32 byte_index = current / 8;
-            u8 bit_mask = (u8)(1U << (current % 8));
-
-            if (seen[byte_index] & bit_mask) {
-                free(clusters);
-                free(seen);
-                return FAT16_WRITE_BAD_FS;
-            }
-
-            seen[byte_index] |= bit_mask;
-            clusters[chain_length++] = current;
-
-            u32 fat_offset = (u32)current * 2;
-
-            if (fat_offset + 1 >= sectors_per_fat * 512U) {
-                free(clusters);
-                free(seen);
-                return FAT16_WRITE_BAD_FS;
-            }
-
-            u32 fat_sector_lba =
-                fat_lba + fat_offset / 512;
-
-            u32 fat_pos = fat_offset % 512;
-
-            if (!disk_read_sector(fat_sector_lba, sector, disk)) {
-                free(clusters);
-                free(seen);
-                return FAT16_WRITE_IO_ERROR;
-            }
-
-            u16 next_cluster =
-                (u16)sector[fat_pos] |
-                ((u16)sector[fat_pos + 1] << 8);
-
-            if (next_cluster >= 0xFFF8)
-                break;
-
-            if (next_cluster < 2 ||
-                next_cluster > max_cluster ||
-                next_cluster >= 0xFFF0) {
-
-                free(clusters);
-                free(seen);
-                return FAT16_WRITE_BAD_FS;
-            }
-
-            current = next_cluster;
-        }
     }
 
     /*
-     * Recheck the directory entry before marking it deleted.
-     * This helps avoid deleting an entry that changed after
-     * the initial lookup.
+     * Pass one: validate every link without allocating a
+     * disk-sized array. The exact size-derived length and the
+     * final end-of-chain marker reject loops and truncated chains.
      */
-    if (!disk_read_sector(directory_sector_lba, sector, disk)) {
-        if (clusters)
-            free(clusters);
-        if (seen)
-            free(seen);
+    u16 current = first_cluster;
+
+    for (u32 step = 0; step < needed; ++step) {
+        if (current < 2 || current > max_cluster)
+            return FAT16_WRITE_BAD_FS;
+
+        u32 offset = (u32)current * 2;
+        if (offset + 1 >= (u32)sectors_per_fat * 512U)
+            return FAT16_WRITE_BAD_FS;
+
+        if (!disk_read_sector(fat_lba + offset / 512, sector, disk))
+            return FAT16_WRITE_IO_ERROR;
+
+        u32 pos = offset % 512;
+        u16 next =
+            (u16)sector[pos] | ((u16)sector[pos + 1] << 8);
+
+        if (step + 1 == needed) {
+            if (next < 0xFFF8)
+                return FAT16_WRITE_BAD_FS;
+        } else {
+            if (next < 2 || next > max_cluster || next >= 0xFFF0)
+                return FAT16_WRITE_BAD_FS;
+            current = next;
+        }
+    }
+
+    diagnostics_log("rm: FAT chain validated; rechecking directory entry.");
+
+    if (!disk_read_sector(dir_lba, sector, disk))
         return FAT16_WRITE_IO_ERROR;
-    }
 
     bool same_name = true;
-
     for (u32 i = 0; i < 11; ++i) {
-        if (sector[directory_offset + i] != (u8)name[i]) {
+        if (sector[dir_off + i] != (u8)name[i]) {
             same_name = false;
             break;
         }
     }
 
     u16 current_cluster =
-        (u16)sector[directory_offset + 26] |
-        ((u16)sector[directory_offset + 27] << 8);
-
-    u16 current_high_cluster =
-        (u16)sector[directory_offset + 20] |
-        ((u16)sector[directory_offset + 21] << 8);
-
+        (u16)sector[dir_off + 26] |
+        ((u16)sector[dir_off + 27] << 8);
+    u16 current_high =
+        (u16)sector[dir_off + 20] |
+        ((u16)sector[dir_off + 21] << 8);
     u32 current_size =
-        (u32)sector[directory_offset + 28] |
-        ((u32)sector[directory_offset + 29] << 8) |
-        ((u32)sector[directory_offset + 30] << 16) |
-        ((u32)sector[directory_offset + 31] << 24);
+        (u32)sector[dir_off + 28] |
+        ((u32)sector[dir_off + 29] << 8) |
+        ((u32)sector[dir_off + 30] << 16) |
+        ((u32)sector[dir_off + 31] << 24);
 
     if (!same_name ||
-        (sector[directory_offset + 11] & 0x10) ||
+        (sector[dir_off + 11] & 0x10) ||
         current_cluster != first_cluster ||
-        current_high_cluster != high_cluster ||
-        current_size != file_size) {
-
-        if (clusters)
-            free(clusters);
-        if (seen)
-            free(seen);
+        current_high != high_cluster ||
+        current_size != file_size)
         return FAT16_WRITE_NOT_FOUND;
-    }
 
-    /* FAT marks a deleted directory entry with 0xE5. */
-    sector[directory_offset] = 0xE5;
+    diagnostics_log("rm: marking directory entry deleted.");
+    sector[dir_off] = 0xE5;
 
-    if (!disk_write_sector(directory_sector_lba, sector, disk)) {
-        if (clusters)
-            free(clusters);
-        if (seen)
-            free(seen);
+    if (!disk_write_sector(dir_lba, sector, disk))
         return FAT16_WRITE_IO_ERROR;
-    }
 
-    if (!disk_read_sector(directory_sector_lba, verify, disk)) {
-        if (clusters)
-            free(clusters);
-        if (seen)
-            free(seen);
+    if (!disk_read_sector(dir_lba, verify, disk))
         return FAT16_WRITE_IO_ERROR;
-    }
 
-    if (verify[directory_offset] != 0xE5) {
-        if (clusters)
-            free(clusters);
-        if (seen)
-            free(seen);
+    if (verify[dir_off] != 0xE5)
         return FAT16_WRITE_IO_ERROR;
-    }
+
+    diagnostics_log("rm: directory entry deletion verified.");
+    diagnostics_log("rm: releasing file clusters.");
 
     /*
-     * The file is now unlinked. Release its cluster chain in
-     * every FAT copy. If cleanup fails, report that separately:
-     * the directory entry has already been removed.
+     * Pass two: read the next link before clearing the current
+     * cluster, then release it in each FAT copy.
      */
-    for (u32 i = 0; i < chain_length; ++i) {
+    current = first_cluster;
+
+    for (u32 step = 0; step < needed; ++step) {
+        u16 next = 0xFFFF;
+
+        if (step + 1 < needed) {
+            u32 offset = (u32)current * 2;
+
+            if (!disk_read_sector(fat_lba + offset / 512, sector, disk))
+                return FAT16_WRITE_DELETE_CLEANUP_ERROR;
+
+            u32 pos = offset % 512;
+            next =
+                (u16)sector[pos] | ((u16)sector[pos + 1] << 8);
+
+            if (next < 2 || next > max_cluster || next >= 0xFFF0)
+                return FAT16_WRITE_DELETE_CLEANUP_ERROR;
+        }
+
         for (u32 copy = 0; copy < fat_count; ++copy) {
             if (!fat16_write_fat_entry_copy(
                     fat_lba + copy * sectors_per_fat,
                     sectors_per_fat,
-                    clusters[i],
+                    current,
                     0,
-                    disk)) {
-
-                free(clusters);
-                free(seen);
+                    disk))
                 return FAT16_WRITE_DELETE_CLEANUP_ERROR;
-            }
         }
+
+        current = next;
     }
 
-    if (clusters)
-        free(clusters);
-    if (seen)
-        free(seen);
-
-    (void)data_lba;
+    diagnostics_log("rm: deletion completed.");
     return FAT16_WRITE_OK;
 }
-
 
 int fat16_dir_open(DIR *dir, const char *path) {
     if (!dir || !path)
