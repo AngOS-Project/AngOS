@@ -1405,40 +1405,89 @@ int fat16_replace_file(
     terminal_write("FATTRACE: scanning for free clusters\n");
     u32 allocated_count = 0;
 
-    for (u32 c = 2;
-         c <= max_cluster &&
+    /*
+     * Scan the first FAT one sector at a time.
+     * One FAT16 sector contains 256 cluster entries.
+     * This avoids issuing a disk read for every single cluster.
+     */
+    for (u32 fat_sector_index = 0;
+         fat_sector_index < sectors_per_fat &&
+         fat_sector_index <= max_cluster / 256 &&
          allocated_count < required_clusters;
-         ++c) {
+         ++fat_sector_index) {
 
-        bool is_free = true;
+        if (fat_sector_index == 0)
+            terminal_write("FATTRACE: reading first FAT scan sector\\n");
 
-        for (u32 copy = 0; copy < fat_count; ++copy) {
-            u32 offset = c * 2;
+        if (!disk_read_sector(
+                fat_lba + fat_sector_index,
+                sector,
+                disk)) {
+            free(new_clusters);
+            return FAT16_WRITE_IO_ERROR;
+        }
 
-            u32 lba =
-                fat_lba +
-                copy * sectors_per_fat +
-                offset / 512;
+        if (fat_sector_index == 0)
+            terminal_write("FATTRACE: first FAT scan sector read\\n");
 
-            u32 pos = offset % 512;
+        for (u32 entry_index = 0;
+             entry_index < 256 &&
+             allocated_count < required_clusters;
+             ++entry_index) {
 
-            if (!disk_read_sector(lba, sector, disk)) {
-                free(new_clusters);
-                return FAT16_WRITE_IO_ERROR;
-            }
+            u32 cluster =
+                fat_sector_index * 256 + entry_index;
+
+            if (cluster < 2)
+                continue;
+
+            if (cluster > max_cluster)
+                break;
+
+            u32 pos = entry_index * 2;
 
             u16 value =
                 (u16)sector[pos] |
                 ((u16)sector[pos + 1] << 8);
 
-            if (value != 0) {
-                is_free = false;
-                break;
-            }
-        }
+            if (value != 0)
+                continue;
 
-        if (is_free)
-            new_clusters[allocated_count++] = (u16)c;
+            /*
+             * Confirm that mirrored FAT copies also mark this
+             * candidate cluster as free.
+             */
+            bool is_free = true;
+            u32 offset = cluster * 2;
+            u32 copy_pos = offset % 512;
+
+            for (u32 copy = 1; copy < fat_count; ++copy) {
+                u32 copy_lba =
+                    fat_lba +
+                    copy * sectors_per_fat +
+                    offset / 512;
+
+                if (!disk_read_sector(
+                        copy_lba,
+                        verify,
+                        disk)) {
+                    free(new_clusters);
+                    return FAT16_WRITE_IO_ERROR;
+                }
+
+                u16 copy_value =
+                    (u16)verify[copy_pos] |
+                    ((u16)verify[copy_pos + 1] << 8);
+
+                if (copy_value != 0) {
+                    is_free = false;
+                    break;
+                }
+            }
+
+            if (is_free)
+                new_clusters[allocated_count++] = (u16)cluster;
+        }
     }
 
     if (allocated_count != required_clusters) {
