@@ -14,6 +14,7 @@
 #define FAT16_WRITE_TOO_LARGE -5
 #define FAT16_WRITE_NOT_FILE  -6
 #define FAT16_WRITE_NO_MEMORY -7
+#define FAT16_WRITE_DELETE_CLEANUP_ERROR -8
 
 int fat16_write_empty_file(
     const char name[11],
@@ -26,6 +27,8 @@ int fat16_replace_file(
     const u8 *data,
     u32 length
 );
+
+int fat16_delete_file(const char name[11]);
 
 typedef struct {
 	/* BPB */
