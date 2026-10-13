@@ -1403,13 +1403,20 @@ int fat16_replace_file(
     }
 
     terminal_write("FATTRACE: scanning for free clusters\n");
+    u8 *mirror_fat_sectors = 0;
+
+    if (fat_count > 1) {
+        size_t mirror_bytes = (size_t)(fat_count - 1) * 512;
+        mirror_fat_sectors = malloc(mirror_bytes);
+
+        if (!mirror_fat_sectors) {
+            free(new_clusters);
+            return FAT16_WRITE_NO_MEMORY;
+        }
+    }
+
     u32 allocated_count = 0;
 
-    /*
-     * Scan the first FAT one sector at a time.
-     * One FAT16 sector contains 256 cluster entries.
-     * This avoids issuing a disk read for every single cluster.
-     */
     for (u32 fat_sector_index = 0;
          fat_sector_index < sectors_per_fat &&
          fat_sector_index <= max_cluster / 256 &&
@@ -1417,26 +1424,51 @@ int fat16_replace_file(
          ++fat_sector_index) {
 
         if (fat_sector_index == 0)
-            terminal_write("FATTRACE: reading first FAT scan sector\\n");
+            terminal_write("FATTRACE: reading first FAT scan sector\n");
 
         if (!disk_read_sector(
                 fat_lba + fat_sector_index,
                 sector,
                 disk)) {
+            free(mirror_fat_sectors);
             free(new_clusters);
             return FAT16_WRITE_IO_ERROR;
         }
 
         if (fat_sector_index == 0)
-            terminal_write("FATTRACE: first FAT scan sector read\\n");
+            terminal_write("FATTRACE: first FAT scan sector read\n");
+
+        for (u32 copy = 1; copy < fat_count; ++copy) {
+            u8 *mirror =
+                mirror_fat_sectors + (size_t)(copy - 1) * 512;
+
+            if (fat_sector_index == 0 && copy == 1)
+                terminal_write("FATTRACE: reading mirror FAT sector\n");
+
+            if (!disk_read_sector(
+                    fat_lba +
+                    copy * sectors_per_fat +
+                    fat_sector_index,
+                    mirror,
+                    disk)) {
+                free(mirror_fat_sectors);
+                free(new_clusters);
+                return FAT16_WRITE_IO_ERROR;
+            }
+
+            if (fat_sector_index == 0 && copy == 1)
+                terminal_write("FATTRACE: mirror FAT sector read\n");
+        }
+
+        if ((fat_sector_index + 1) % 16 == 0)
+            terminal_write("FATTRACE: scanned 16 more FAT sectors\n");
 
         for (u32 entry_index = 0;
              entry_index < 256 &&
              allocated_count < required_clusters;
              ++entry_index) {
 
-            u32 cluster =
-                fat_sector_index * 256 + entry_index;
+            u32 cluster = fat_sector_index * 256 + entry_index;
 
             if (cluster < 2)
                 continue;
@@ -1453,33 +1485,17 @@ int fat16_replace_file(
             if (value != 0)
                 continue;
 
-            /*
-             * Confirm that mirrored FAT copies also mark this
-             * candidate cluster as free.
-             */
             bool is_free = true;
-            u32 offset = cluster * 2;
-            u32 copy_pos = offset % 512;
 
             for (u32 copy = 1; copy < fat_count; ++copy) {
-                u32 copy_lba =
-                    fat_lba +
-                    copy * sectors_per_fat +
-                    offset / 512;
+                const u8 *mirror =
+                    mirror_fat_sectors + (size_t)(copy - 1) * 512;
 
-                if (!disk_read_sector(
-                        copy_lba,
-                        verify,
-                        disk)) {
-                    free(new_clusters);
-                    return FAT16_WRITE_IO_ERROR;
-                }
+                u16 mirror_value =
+                    (u16)mirror[pos] |
+                    ((u16)mirror[pos + 1] << 8);
 
-                u16 copy_value =
-                    (u16)verify[copy_pos] |
-                    ((u16)verify[copy_pos + 1] << 8);
-
-                if (copy_value != 0) {
+                if (mirror_value != 0) {
                     is_free = false;
                     break;
                 }
@@ -1489,6 +1505,8 @@ int fat16_replace_file(
                 new_clusters[allocated_count++] = (u16)cluster;
         }
     }
+
+    free(mirror_fat_sectors);
 
     if (allocated_count != required_clusters) {
         free(new_clusters);
