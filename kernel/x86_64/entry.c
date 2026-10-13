@@ -75,6 +75,21 @@ static bool starts_with_local(
     return true;
 }
 
+static const char *strchr_local(const char *s, int c) {
+    if (!s)
+        return 0;
+
+    for (;;) {
+        if (*s == (char)c)
+            return s;
+
+        if (*s == '\0')
+            return 0;
+
+        ++s;
+    }
+}
+
 static void shell_ls(
     const char *argument
 ) {
@@ -552,7 +567,7 @@ static void shell_cp(const char *argument) {
     }
 
     if (!shell_make_fat83(destination_name, fat_name) ||
-        strchr(destination_name, '/') != 0) {
+        strchr_local(destination_name, '/') != 0) {
         terminal_write("cp: destination must be an 8.3 filename in the root directory\n");
         return;
     }
