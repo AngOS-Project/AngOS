@@ -1116,7 +1116,7 @@ static void shell_help(const char *topic) {
 
     if (!*topic) {
         terminal_write("AngOS Commands (use h <command> for details)\n");
-        terminal_write("  h, help [command]  Show general or command-specific help\n");
+        terminal_write("  h/help [command]   Show general or command-specific help\n");
         terminal_write("  cls                Clear the terminal\n");
         terminal_write("  ver                Show AngOS version\n");
         terminal_write("  disk               Detect the primary disk\n");
