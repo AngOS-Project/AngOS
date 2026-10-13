@@ -1,4 +1,5 @@
 #include <types.h>
+#include <diagnostics.h>
 #include <syscall.h>
 #include <stdlib.h>
 #include <string.h>
