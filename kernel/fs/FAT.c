@@ -1122,11 +1122,7 @@ int fat16_write_empty_file(
         return FAT16_WRITE_IO_ERROR;
 
 
-    if (!disk_write_sector(
-            directory_sector_lba,
-            sector,
-            disk))
-        return FAT16_WRITE_IO_ERROR;
+
 
     if (!disk_read_sector(
             directory_sector_lba,

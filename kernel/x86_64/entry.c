@@ -492,6 +492,177 @@ static void shell_ec(const char *argument) {
     terminal_write("\n");
 }
 
+static void shell_cp(const char *argument) {
+    char source_name[125];
+    char destination_name[13];
+    char source_path[128];
+    char destination_path[16];
+    char fat_name[11];
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    u32 source_length = 0;
+    while (argument[source_length] &&
+           argument[source_length] != ' ' &&
+           argument[source_length] != '\t') {
+        if (source_length >= sizeof(source_name) - 1) {
+            terminal_write("cp: source path is too long\n");
+            return;
+        }
+        source_name[source_length] = argument[source_length];
+        ++source_length;
+    }
+
+    if (source_length == 0) {
+        terminal_write("Usage: cp <source-file> <destination-name>\n");
+        return;
+    }
+    source_name[source_length] = '\0';
+    argument += source_length;
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    u32 destination_length = 0;
+    while (argument[destination_length] &&
+           argument[destination_length] != ' ' &&
+           argument[destination_length] != '\t') {
+        if (destination_length >= sizeof(destination_name) - 1) {
+            terminal_write("cp: destination must be an 8.3 filename in the root directory\n");
+            return;
+        }
+        destination_name[destination_length] = argument[destination_length];
+        ++destination_length;
+    }
+
+    if (destination_length == 0) {
+        terminal_write("Usage: cp <source-file> <destination-name>\n");
+        return;
+    }
+    destination_name[destination_length] = '\0';
+    argument += destination_length;
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    if (*argument) {
+        terminal_write("Usage: cp <source-file> <destination-name>\n");
+        return;
+    }
+
+    if (!shell_make_fat83(destination_name, fat_name) ||
+        strchr(destination_name, '/') != 0) {
+        terminal_write("cp: destination must be an 8.3 filename in the root directory\n");
+        return;
+    }
+
+    source_path[0] = '|';
+    source_path[1] = 'A';
+    source_path[2] = '/';
+    memcpy(source_path + 3, source_name, source_length + 1);
+
+    destination_path[0] = '|';
+    destination_path[1] = 'A';
+    destination_path[2] = '/';
+    memcpy(destination_path + 3, destination_name, destination_length + 1);
+
+    DIR *source_dir = opendir(source_path);
+    if (source_dir) {
+        closedir(source_dir);
+        terminal_write("cp: recursive directory copying is not supported yet\n");
+        terminal_write("cp: directory creation and nested-file writing must be implemented first\n");
+        return;
+    }
+
+    FILE *source_fp = fopen(source_path, 0);
+    if (!source_fp) {
+        terminal_write("cp: source file not found\n");
+        return;
+    }
+
+    if (source_fp->size > 0xFFFFFFFFULL) {
+        fclose(source_fp);
+        terminal_write("cp: source file is too large\n");
+        return;
+    }
+
+    u32 length = (u32)source_fp->size;
+    u8 *buffer = malloc(length ? (size_t)length : 1);
+
+    if (!buffer) {
+        fclose(source_fp);
+        terminal_write("cp: not enough memory\n");
+        return;
+    }
+
+    u32 loaded = 0;
+    while (loaded < length) {
+        size_t count = fread(
+            buffer + loaded,
+            length - loaded,
+            source_fp
+        );
+
+        if (count == 0)
+            break;
+
+        loaded += (u32)count;
+    }
+
+    fclose(source_fp);
+
+    if (loaded != length) {
+        free(buffer);
+        terminal_write("cp: could not read the entire source file\n");
+        return;
+    }
+
+    DIR *destination_dir = opendir(destination_path);
+    if (destination_dir) {
+        closedir(destination_dir);
+        free(buffer);
+        terminal_write("cp: destination is a directory, not a filename\n");
+        return;
+    }
+
+    FILE *destination_fp = fopen(destination_path, 0);
+
+    if (destination_fp) {
+        fclose(destination_fp);
+    } else {
+        shell_nw(destination_name);
+        destination_fp = fopen(destination_path, 0);
+
+        if (!destination_fp) {
+            free(buffer);
+            terminal_write("cp: could not create destination file\n");
+            return;
+        }
+
+        fclose(destination_fp);
+    }
+
+    int result = fat16_replace_file(fat_name, buffer, length);
+    free(buffer);
+
+    if (result == FAT16_WRITE_OK) {
+        terminal_write("cp: copied ");
+        terminal_write(source_name);
+        terminal_write(" to ");
+        terminal_write(destination_name);
+        terminal_write("\n");
+    } else if (result == FAT16_WRITE_NO_SPACE) {
+        terminal_write("cp: not enough disk space\n");
+    } else if (result == FAT16_WRITE_NO_MEMORY) {
+        terminal_write("cp: not enough memory for disk operation\n");
+    } else if (result == FAT16_WRITE_TOO_LARGE) {
+        terminal_write("cp: file is too large for the destination operation\n");
+    } else {
+        terminal_write("cp: copy failed; the destination may be unchanged\n");
+    }
+}
+
 #define ED_MAX_FILE_SIZE 16384U
 #define ED_MAX_LINES 8192U
 
@@ -567,11 +738,28 @@ static void shell_ed(const char *argument) {
 
     u32 line_number = 0;
     bool has_line_number = false;
+    const char *number_start = token_start + 1;
+    const char *number_end = token_end;
 
-    for (const char *p = token_start + 1;
-         p < token_end;
+    if (number_start == token_end) {
+        const char *next = token_end;
+        while (*next == ' ' || *next == '\t')
+            ++next;
+
+        if (*next >= '0' && *next <= '9') {
+            number_start = next;
+            number_end = next;
+
+            while (*number_end &&
+                   *number_end != ' ' &&
+                   *number_end != '\t')
+                ++number_end;
+        }
+    }
+
+    for (const char *p = number_start;
+         p < number_end;
          ++p) {
-
         if (*p < '0' || *p > '9') {
             terminal_write("ed: invalid line number\n");
             return;
@@ -593,10 +781,7 @@ static void shell_ed(const char *argument) {
         return;
     }
 
-    argument = token_end;
-
-    while (*argument == ' ' || *argument == '\t')
-        ++argument;
+    argument = number_end;
 
     const char *payload = 0;
     u32 payload_length = 0;
@@ -876,6 +1061,12 @@ static void shell_ed(const char *argument) {
             message = "ed: FAT16 filesystem unavailable\n";
         } else if (result == FAT16_WRITE_NOT_FILE) {
             message = "ed: target is not a file\n";
+        } else if (result == FAT16_WRITE_NOT_EMPTY) {
+            message = "ed: file changed while editing; no changes committed\n";
+        } else if (result == FAT16_WRITE_TOO_LARGE) {
+            message = "ed: edited file is too large for this operation\n";
+        } else if (result == FAT16_WRITE_IO_ERROR) {
+            message = "ed: disk read, write, or verification failed\n";
         } else {
             message = "ed: saving the edited file failed\n";
         }
@@ -901,81 +1092,98 @@ cleanup:
     }
 }
 
+static void shell_help(const char *topic) {
+    if (!topic)
+        topic = "";
+
+    while (*topic == ' ' || *topic == '\t')
+        ++topic;
+
+    if (!*topic) {
+        terminal_write("AngOS Commands (use h <command> for details)\n");
+        terminal_write("  h, help [command]  Show general or command-specific help\n");
+        terminal_write("  cls                Clear the terminal\n");
+        terminal_write("  ver                Show AngOS version\n");
+        terminal_write("  disk               Detect the primary disk\n");
+        terminal_write("  diskread           Read sector zero\n");
+        terminal_write("  diskinit           Initialize disk and filesystem tables\n");
+        terminal_write("  fstest             Test file reading\n");
+        terminal_write("  ls [directory]     List a directory\n");
+        terminal_write("  cat <file>         Display a file\n");
+        terminal_write("  stat <path>        Show file or directory information\n");
+        terminal_write("  nw <filename>      Create a new empty file\n");
+        terminal_write("  ec <text>          Display text in the terminal\n");
+        terminal_write("  ed <file> ...      Insert, replace, or delete a line\n");
+        terminal_write("  cp <source> <dest> Copy a file into a root-directory filename\n");
+        terminal_write("  fat                Detect the filesystem type\n");
+        terminal_write("  reboot             Reboot AngOS\n");
+        return;
+    }
+
+    if (strcmp_local(topic, "h") == 0 ||
+        strcmp_local(topic, "help") == 0) {
+        terminal_write("h [command]: show the command list or details for one command\n");
+        terminal_write("Examples: h ed, h nw, h cp, h ls\n");
+    } else if (strcmp_local(topic, "cls") == 0) {
+        terminal_write("cls: clear the terminal screen\n");
+    } else if (strcmp_local(topic, "ver") == 0) {
+        terminal_write("ver: display the AngOS kernel version\n");
+    } else if (strcmp_local(topic, "disk") == 0) {
+        terminal_write("disk: probe the primary ATA disk and report its sector count\n");
+    } else if (strcmp_local(topic, "diskread") == 0) {
+        terminal_write("diskread: read sector zero and display its boot signature\n");
+    } else if (strcmp_local(topic, "diskinit") == 0) {
+        terminal_write("diskinit: initialize disk, partition, and filesystem tables\n");
+    } else if (strcmp_local(topic, "fstest") == 0) {
+        terminal_write("fstest: exercise the FILE API by opening and reading the bootloader file\n");
+    } else if (strcmp_local(topic, "ls") == 0) {
+        terminal_write("ls [directory]: list the root directory or a path relative to volume A\n");
+        terminal_write("Example: ls EFI/BOOT\n");
+    } else if (strcmp_local(topic, "cat") == 0) {
+        terminal_write("cat <file>: display the contents of a file\n");
+        terminal_write("Example: cat notes.txt\n");
+    } else if (strcmp_local(topic, "stat") == 0) {
+        terminal_write("stat <path>: display whether the path is a file or directory and show file size\n");
+    } else if (strcmp_local(topic, "nw") == 0) {
+        terminal_write("nw <filename>: create an empty FAT 8.3 file in the root directory\n");
+        terminal_write("Example: nw notes.txt\n");
+    } else if (strcmp_local(topic, "ec") == 0) {
+        terminal_write("ec <text>: print text in the terminal; it does not write a file\n");
+    } else if (strcmp_local(topic, "ed") == 0) {
+        terminal_write("ed <file> +N \"text\": insert text before line N\n");
+        terminal_write("ed <file> + \"text\": append a line\n");
+        terminal_write("ed <file> +0 \"text\": insert at the beginning\n");
+        terminal_write("ed <file> =N \"text\": replace line N\n");
+        terminal_write("ed <file> -N: delete line N\n");
+        terminal_write("A space before N is also accepted. Line numbers start at 1; range editing is not available yet.\n");
+        terminal_write("Example: ed notes.txt = 1 \"replacement\"\n");
+    } else if (strcmp_local(topic, "cp") == 0) {
+        terminal_write("cp <source-file> <destination-name>: copy a file into the root directory\n");
+        terminal_write("Example: cp notes.txt backup.txt\n");
+        terminal_write("Source files may be in a subdirectory. Destination must be an 8.3 root filename.\n");
+        terminal_write("Recursive directory copies are not available yet.\n");
+    } else if (strcmp_local(topic, "fat") == 0) {
+        terminal_write("fat: detect and display the supported FAT filesystem type\n");
+    } else if (strcmp_local(topic, "reboot") == 0) {
+        terminal_write("reboot: reboot the machine\n");
+    } else if (strcmp_local(topic, "fatls") == 0) {
+        terminal_write("fatls: legacy FAT16 root listing used for diagnostics; use ls normally\n");
+    } else if (strcmp_local(topic, "fatcat") == 0) {
+        terminal_write("fatcat <file>: legacy FAT16 file reader used for diagnostics; use cat normally\n");
+    } else {
+        terminal_write("h: no help is available for that command\n");
+        terminal_write("Run h to see the command list\n");
+    }
+}
+
 void execute_command(const char *cmd) {
-    if (strcmp_local(cmd, "help") == 0) {
-
-        terminal_write(
-            "AngOS Built-in Commands:\n"
-        );
-
-        terminal_write(
-            "  help     - Show available commands\n"
-        );
-
-        terminal_write(
-            "  cls      - Clear terminal screen\n"
-        );
-
-        terminal_write(
-            "  ver      - Display OS kernel version\n"
-        );
-
-        terminal_write(
-            "  disk     - Detect the primary disk\n"
-        );
-
-        terminal_write(
-            "  diskread - Read sector 0\n"
-        );
-
-        terminal_write(
-            "  diskinit - Initialize disk/filesystem table\n"
-        );
-
-        terminal_write(
-            "  fstest   - Test the filesystem API\n"
-        );
-
-        terminal_write(
-            "  ls       - List a directory\n"
-        );
-
-        terminal_write(
-            "  cat      - Read a file\n"
-        );
-
-        terminal_write(
-            "  stat     - Show file or directory information\n"
-        );
-
-        terminal_write(
-            "  nw       - Create a new file\n"
-        ); 
-        
-        terminal_write(
-            "  ec       - Display text in the terminal\n"
-        );
-
-        terminal_write(
-            "  ed       - Edit lines in an existing file\n"
-        );
-
-        terminal_write(
-            "  fat      - Detect the FAT filesystem\n"
-        );
-
-        terminal_write(
-            "  fatls    - Legacy FAT16 directory listing\n"
-        );
-
-        terminal_write(
-            "  fatcat   - Legacy FAT16 file reader\n"
-        );
-
-        terminal_write(
-            "  reboot   - Reboot system\n"
-        );
-
+    if (strcmp_local(cmd, "h") == 0 ||
+        strcmp_local(cmd, "help") == 0) {
+        shell_help("");
+    } else if (starts_with_local(cmd, "h ")) {
+        shell_help(cmd + 2);
+    } else if (starts_with_local(cmd, "help ")) {
+        shell_help(cmd + 5);
     } else if (strcmp_local(cmd, "cls") == 0) {
 
         terminal_clear();
@@ -1320,6 +1528,18 @@ void execute_command(const char *cmd) {
         shell_ed(cmd + 3);
 
     } else if (
+        strcmp_local(cmd, "cp") == 0
+    ) {
+
+        shell_cp("");
+
+    } else if (
+        starts_with_local(cmd, "cp ")
+    ) {
+
+        shell_cp(cmd + 3);
+
+    } else if (
         strcmp_local(cmd, "fat") == 0
     ) {
 
@@ -1377,7 +1597,7 @@ void execute_command(const char *cmd) {
     } else if (cmd[0] != '\0') {
 
         terminal_write(
-            "Unknown command. Type 'help' for commands.\n"
+            "Unknown command. Type 'h' for commands.\n"
         );
     }
 }
@@ -1390,7 +1610,7 @@ void kernel_main(void) {
     );
 
     terminal_write(
-        "Type 'help' to get started.\n\n"
+        "Type 'h' to get started.\n\n"
     );
 
     while (1) {
