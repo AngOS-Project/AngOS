@@ -731,10 +731,8 @@ static bool fat16_write_fat_entry_copy(
     sector[pos] = (u8)value;
     sector[pos + 1] = (u8)(value >> 8);
 
-    terminal_write("FATTRACE: writing FAT sector\n");
     if (!disk_write_sector(lba, sector, disk))
         return false;
-    terminal_write("FATTRACE: FAT sector write returned\n");
 
     if (!disk_read_sector(lba, verify, disk))
         return false;
@@ -1022,12 +1020,11 @@ int fat16_write_empty_file(
             memcpy(sector, data + start, count);
         }
 
-        writesectorpio(
-            cluster_lba + s,
-            1,
-            sector,
-            disk
-        );
+        if (!disk_write_sector(
+                cluster_lba + s,
+                sector,
+                disk))
+            return FAT16_WRITE_IO_ERROR;
 
         if (!disk_read_sector(
                 cluster_lba + s,
@@ -1169,7 +1166,6 @@ int fat16_replace_file(
     const u8 *data,
     u32 length
 ) {
-    terminal_write("FATTRACE: entered replacement\n");
     if (!name || (length != 0 && !data))
         return FAT16_WRITE_BAD_FS;
 
@@ -1375,7 +1371,6 @@ int fat16_replace_file(
         return FAT16_WRITE_NOT_FOUND;
     }
 
-    terminal_write("FATTRACE: target file located\n");
     if (directory_entry[11] & 0x10) {
         free(new_clusters);
         return FAT16_WRITE_NOT_FILE;
@@ -1402,7 +1397,196 @@ int fat16_replace_file(
         return FAT16_WRITE_BAD_FS;
     }
 
-    terminal_write("FATTRACE: scanning for free clusters\n");
+    if (old_cluster == 0 &&
+        old_size == 0 &&
+        length > 0 &&
+        length <= bytes_per_cluster) {
+        free(new_clusters);
+        return fat16_write_empty_file(name, data, length);
+    }
+
+    if (old_cluster >= 2 &&
+        old_cluster <= max_cluster &&
+        old_size <= bytes_per_cluster &&
+        length <= bytes_per_cluster) {
+
+        u32 old_fat_offset = (u32)old_cluster * 2;
+        u8 old_fat_sector[512];
+
+        if (!disk_read_sector(
+                fat_lba + old_fat_offset / 512,
+                old_fat_sector,
+                disk)) {
+            free(new_clusters);
+            return FAT16_WRITE_IO_ERROR;
+        }
+
+        u32 old_fat_pos = old_fat_offset % 512;
+        u16 old_next =
+            (u16)old_fat_sector[old_fat_pos] |
+            ((u16)old_fat_sector[old_fat_pos + 1] << 8);
+
+        if (old_next >= 0xFFF8) {
+            if (!disk_read_sector(
+                    directory_sector_lba,
+                    sector,
+                    disk)) {
+                free(new_clusters);
+                return FAT16_WRITE_IO_ERROR;
+            }
+
+            bool original_name_ok = true;
+            for (u32 i = 0; i < 11; ++i) {
+                if (sector[directory_offset + i] != (u8)name[i]) {
+                    original_name_ok = false;
+                    break;
+                }
+            }
+
+            u16 original_cluster =
+                (u16)sector[directory_offset + 26] |
+                ((u16)sector[directory_offset + 27] << 8);
+            u32 original_size =
+                (u32)sector[directory_offset + 28] |
+                ((u32)sector[directory_offset + 29] << 8) |
+                ((u32)sector[directory_offset + 30] << 16) |
+                ((u32)sector[directory_offset + 31] << 24);
+
+            if (!original_name_ok ||
+                original_cluster != old_cluster ||
+                original_size != old_size) {
+                free(new_clusters);
+                return FAT16_WRITE_NOT_EMPTY;
+            }
+
+            u32 existing_cluster_lba =
+                data_lba +
+                ((u32)old_cluster - 2) * sectors_per_cluster;
+            u32 data_offset = 0;
+
+            for (u32 s = 0; s < sectors_per_cluster; ++s) {
+                memset(sector, 0, sizeof(sector));
+                u32 count = 0;
+
+                if (data_offset < length) {
+                    count = length - data_offset;
+                    if (count > 512)
+                        count = 512;
+                    if (count != 0)
+                        memcpy(sector, data + data_offset, count);
+                }
+
+                if (!disk_write_sector(
+                        existing_cluster_lba + s,
+                        sector,
+                        disk)) {
+                    free(new_clusters);
+                    return FAT16_WRITE_IO_ERROR;
+                }
+
+                if (!disk_read_sector(
+                        existing_cluster_lba + s,
+                        verify,
+                        disk)) {
+                    free(new_clusters);
+                    return FAT16_WRITE_IO_ERROR;
+                }
+
+                for (u32 b = 0; b < 512; ++b) {
+                    if (sector[b] != verify[b]) {
+                        free(new_clusters);
+                        return FAT16_WRITE_IO_ERROR;
+                    }
+                }
+
+                data_offset += count;
+            }
+
+            if (!disk_read_sector(
+                    directory_sector_lba,
+                    sector,
+                    disk)) {
+                free(new_clusters);
+                return FAT16_WRITE_IO_ERROR;
+            }
+
+            bool current_name_ok = true;
+            for (u32 i = 0; i < 11; ++i) {
+                if (sector[directory_offset + i] != (u8)name[i]) {
+                    current_name_ok = false;
+                    break;
+                }
+            }
+
+            u16 current_cluster =
+                (u16)sector[directory_offset + 26] |
+                ((u16)sector[directory_offset + 27] << 8);
+            u32 current_size =
+                (u32)sector[directory_offset + 28] |
+                ((u32)sector[directory_offset + 29] << 8) |
+                ((u32)sector[directory_offset + 30] << 16) |
+                ((u32)sector[directory_offset + 31] << 24);
+
+            if (!current_name_ok ||
+                current_cluster != old_cluster ||
+                current_size != old_size) {
+                free(new_clusters);
+                return FAT16_WRITE_NOT_EMPTY;
+            }
+
+            sector[directory_offset + 20] = 0;
+            sector[directory_offset + 21] = 0;
+            sector[directory_offset + 26] = (u8)old_cluster;
+            sector[directory_offset + 27] = (u8)(old_cluster >> 8);
+            sector[directory_offset + 28] = (u8)length;
+            sector[directory_offset + 29] = (u8)(length >> 8);
+            sector[directory_offset + 30] = (u8)(length >> 16);
+            sector[directory_offset + 31] = (u8)(length >> 24);
+
+            if (!disk_write_sector(
+                    directory_sector_lba,
+                    sector,
+                    disk)) {
+                free(new_clusters);
+                return FAT16_WRITE_IO_ERROR;
+            }
+
+            if (!disk_read_sector(
+                    directory_sector_lba,
+                    verify,
+                    disk)) {
+                free(new_clusters);
+                return FAT16_WRITE_IO_ERROR;
+            }
+
+            bool saved_name_ok = true;
+            for (u32 i = 0; i < 11; ++i) {
+                if (verify[directory_offset + i] != (u8)name[i]) {
+                    saved_name_ok = false;
+                    break;
+                }
+            }
+
+            u16 saved_cluster =
+                (u16)verify[directory_offset + 26] |
+                ((u16)verify[directory_offset + 27] << 8);
+            u32 saved_size =
+                (u32)verify[directory_offset + 28] |
+                ((u32)verify[directory_offset + 29] << 8) |
+                ((u32)verify[directory_offset + 30] << 16) |
+                ((u32)verify[directory_offset + 31] << 24);
+
+            free(new_clusters);
+
+            if (!saved_name_ok ||
+                saved_cluster != old_cluster ||
+                saved_size != length)
+                return FAT16_WRITE_IO_ERROR;
+
+            return FAT16_WRITE_OK;
+        }
+    }
+
     u8 *mirror_fat_sectors = 0;
 
     if (fat_count > 1) {
@@ -1423,11 +1607,7 @@ int fat16_replace_file(
          allocated_count < required_clusters;
          ++fat_sector_index) {
 
-        if (fat_sector_index == 0)
-            terminal_write("FATTRACE: reading first FAT scan sector\n");
 
-        if (fat_sector_index == 1)
-            terminal_write("FATTRACE: reading second FAT sector\n");
 
         if (!disk_read_sector(
                 fat_lba + fat_sector_index,
@@ -1438,18 +1618,12 @@ int fat16_replace_file(
             return FAT16_WRITE_IO_ERROR;
         }
 
-        if (fat_sector_index == 1)
-            terminal_write("FATTRACE: second FAT sector read\n");
 
-        if (fat_sector_index == 0)
-            terminal_write("FATTRACE: first FAT scan sector read\n");
 
         for (u32 copy = 1; copy < fat_count; ++copy) {
             u8 *mirror =
                 mirror_fat_sectors + (size_t)(copy - 1) * 512;
 
-            if (fat_sector_index == 0 && copy == 1)
-                terminal_write("FATTRACE: reading mirror FAT sector\n");
 
             if (!disk_read_sector(
                     fat_lba +
@@ -1462,15 +1636,9 @@ int fat16_replace_file(
                 return FAT16_WRITE_IO_ERROR;
             }
 
-            if (fat_sector_index == 0 && copy == 1)
-                terminal_write("FATTRACE: mirror FAT sector read\n");
         }
 
-        if ((fat_sector_index + 1) % 16 == 0)
-            terminal_write("FATTRACE: scanned 16 more FAT sectors\n");
 
-        if (fat_sector_index == 0)
-            terminal_write("FATTRACE: starting first-sector entry scan\n");
 
         for (u32 entry_index = 0;
              entry_index < 256 &&
@@ -1494,14 +1662,10 @@ int fat16_replace_file(
             if (value != 0)
                 continue;
 
-            if (fat_sector_index == 0)
-                terminal_write("FATTRACE: primary FAT has a free candidate\n");
 
             bool is_free = true;
 
             for (u32 copy = 1; copy < fat_count; ++copy) {
-                if (fat_sector_index == 0)
-                    terminal_write("FATTRACE: checking candidate in mirror memory\n");
 
                 const u8 *mirror =
                     mirror_fat_sectors + (size_t)(copy - 1) * 512;
@@ -1516,33 +1680,22 @@ int fat16_replace_file(
                 }
             }
 
-            if (fat_sector_index == 0)
-                terminal_write("FATTRACE: candidate mirror check finished\n");
 
             if (is_free) {
                 new_clusters[allocated_count++] = (u16)cluster;
-                if (fat_sector_index == 0)
-                    terminal_write("FATTRACE: free cluster accepted\n");
             }
         }
 
-        if (fat_sector_index == 0)
-            terminal_write("FATTRACE: finished first-sector entry scan\n");
 
-        if (fat_sector_index == 1)
-            terminal_write("FATTRACE: finished second-sector entry scan\n");
     }
 
-    terminal_write("FATTRACE: cluster scan loop ended\n");
     free(mirror_fat_sectors);
-    terminal_write("FATTRACE: mirror buffer freed\n");
 
     if (allocated_count != required_clusters) {
         free(new_clusters);
         return FAT16_WRITE_NO_SPACE;
     }
 
-    terminal_write("FATTRACE: cluster scan finished\n");
     u32 data_offset = 0;
 
     for (u32 i = 0; i < required_clusters; ++i) {
@@ -1569,14 +1722,12 @@ int fat16_replace_file(
                 );
             }
 
-            terminal_write("FATTRACE: writing data sector\n");
             if (!disk_write_sector(
                     cluster_lba + s,
                     sector,
                     disk
                 ))
                 goto rollback;
-            terminal_write("FATTRACE: data write returned\n");
 
             if (!disk_read_sector(
                     cluster_lba + s,
@@ -1593,7 +1744,6 @@ int fat16_replace_file(
         }
     }
 
-    terminal_write("FATTRACE: linking FAT entries\n");
     for (u32 copy = 0; copy < fat_count; ++copy) {
         for (u32 i = 0; i < required_clusters; ++i) {
             u16 next =
@@ -1611,7 +1761,6 @@ int fat16_replace_file(
         }
     }
 
-    terminal_write("FATTRACE: rereading directory\n");
     if (!disk_read_sector(
             directory_sector_lba,
             sector,
@@ -1659,13 +1808,11 @@ int fat16_replace_file(
     sector[directory_offset + 30] = (u8)(length >> 16);
     sector[directory_offset + 31] = (u8)(length >> 24);
 
-    terminal_write("FATTRACE: writing directory entry\n");
     bool directory_write_ok = disk_write_sector(
         directory_sector_lba,
         sector,
         disk
     );
-    terminal_write("FATTRACE: directory write returned\n");
 
 
     if (!disk_read_sector(
@@ -1711,7 +1858,6 @@ int fat16_replace_file(
         return FAT16_WRITE_IO_ERROR;
     }
 
-    terminal_write("FATTRACE: clearing old file chain\n");
     u16 old_current = old_cluster;
 
     for (u32 step = 0;
@@ -1748,7 +1894,6 @@ int fat16_replace_file(
     return FAT16_WRITE_OK;
 
 rollback:
-    terminal_write("FATTRACE: rollback started\n");
     /*
      * The directory has not been committed, so the old
      * file remains the active version. Release the new

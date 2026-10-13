@@ -647,7 +647,6 @@ static void shell_ed(const char *argument) {
 
     path[filename_length + 3] = '\0';
 
-    terminal_write("EDTRACE: opening file\n");
     FILE *fp = fopen(path, 0);
 
     if (!fp) {
@@ -859,7 +858,6 @@ static void shell_ed(const char *argument) {
         new_data[output_offset++] = '\n';
 
     {
-        terminal_write("EDTRACE: entering FAT save\n");
         int result = fat16_replace_file(
             fat_name,
             new_data,
@@ -883,9 +881,7 @@ static void shell_ed(const char *argument) {
         }
     }
 
-    terminal_write("EDTRACE: save call returned\n");
 cleanup:
-    terminal_write("EDTRACE: cleanup entered\n");
     if (fp)
         fclose(fp);
 
