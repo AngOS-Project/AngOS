@@ -731,8 +731,10 @@ static bool fat16_write_fat_entry_copy(
     sector[pos] = (u8)value;
     sector[pos + 1] = (u8)(value >> 8);
 
+    terminal_write("FATTRACE: writing FAT sector\n");
     if (!disk_write_sector(lba, sector, disk))
         return false;
+    terminal_write("FATTRACE: FAT sector write returned\n");
 
     if (!disk_read_sector(lba, verify, disk))
         return false;
@@ -1123,11 +1125,11 @@ int fat16_write_empty_file(
         return FAT16_WRITE_IO_ERROR;
 
 
-    bool directory_write_ok = disk_write_sector(
-        directory_sector_lba,
-        sector,
-        disk
-    );
+    if (!disk_write_sector(
+            directory_sector_lba,
+            sector,
+            disk))
+        return FAT16_WRITE_IO_ERROR;
 
     if (!disk_read_sector(
             directory_sector_lba,
@@ -1167,6 +1169,7 @@ int fat16_replace_file(
     const u8 *data,
     u32 length
 ) {
+    terminal_write("FATTRACE: entered replacement\n");
     if (!name || (length != 0 && !data))
         return FAT16_WRITE_BAD_FS;
 
@@ -1372,6 +1375,7 @@ int fat16_replace_file(
         return FAT16_WRITE_NOT_FOUND;
     }
 
+    terminal_write("FATTRACE: target file located\n");
     if (directory_entry[11] & 0x10) {
         free(new_clusters);
         return FAT16_WRITE_NOT_FILE;
@@ -1398,6 +1402,7 @@ int fat16_replace_file(
         return FAT16_WRITE_BAD_FS;
     }
 
+    terminal_write("FATTRACE: scanning for free clusters\n");
     u32 allocated_count = 0;
 
     for (u32 c = 2;
@@ -1441,6 +1446,7 @@ int fat16_replace_file(
         return FAT16_WRITE_NO_SPACE;
     }
 
+    terminal_write("FATTRACE: cluster scan finished\n");
     u32 data_offset = 0;
 
     for (u32 i = 0; i < required_clusters; ++i) {
@@ -1467,12 +1473,14 @@ int fat16_replace_file(
                 );
             }
 
+            terminal_write("FATTRACE: writing data sector\n");
             if (!disk_write_sector(
                     cluster_lba + s,
                     sector,
                     disk
                 ))
                 goto rollback;
+            terminal_write("FATTRACE: data write returned\n");
 
             if (!disk_read_sector(
                     cluster_lba + s,
@@ -1489,6 +1497,7 @@ int fat16_replace_file(
         }
     }
 
+    terminal_write("FATTRACE: linking FAT entries\n");
     for (u32 copy = 0; copy < fat_count; ++copy) {
         for (u32 i = 0; i < required_clusters; ++i) {
             u16 next =
@@ -1506,6 +1515,7 @@ int fat16_replace_file(
         }
     }
 
+    terminal_write("FATTRACE: rereading directory\n");
     if (!disk_read_sector(
             directory_sector_lba,
             sector,
@@ -1553,6 +1563,15 @@ int fat16_replace_file(
     sector[directory_offset + 30] = (u8)(length >> 16);
     sector[directory_offset + 31] = (u8)(length >> 24);
 
+    terminal_write("FATTRACE: writing directory entry\n");
+    bool directory_write_ok = disk_write_sector(
+        directory_sector_lba,
+        sector,
+        disk
+    );
+    terminal_write("FATTRACE: directory write returned\n");
+
+
     if (!disk_read_sector(
             directory_sector_lba,
             verify,
@@ -1596,6 +1615,7 @@ int fat16_replace_file(
         return FAT16_WRITE_IO_ERROR;
     }
 
+    terminal_write("FATTRACE: clearing old file chain\n");
     u16 old_current = old_cluster;
 
     for (u32 step = 0;
@@ -1632,6 +1652,7 @@ int fat16_replace_file(
     return FAT16_WRITE_OK;
 
 rollback:
+    terminal_write("FATTRACE: rollback started\n");
     /*
      * The directory has not been committed, so the old
      * file remains the active version. Release the new
