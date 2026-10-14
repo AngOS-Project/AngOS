@@ -414,8 +414,7 @@ static void shell_nw(
                 sector[off + 11] =
                     ARCHIVE;
                 if (!writesectorpio(root_lba + s, 1, sector, 0)) {
-                    terminal_write("nw: disk write failed or timed out
-");
+                    terminal_write("nw: disk write failed or timed out\n");
                     return;
                 }
 
