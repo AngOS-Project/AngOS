@@ -51,7 +51,29 @@ static void wt_field_hex(const char *label, u64 value) {
     wt_putc('\n');
 }
 
+#define WT_HISTORY_CAPACITY 32
+#define WT_HISTORY_TEXT 96
+static char wt_history[WT_HISTORY_CAPACITY][WT_HISTORY_TEXT];
+static u32 wt_history_count;
+static u32 wt_history_next;
+static bool wt_initialized;
+
+static void diagnostics_record(const char *message) {
+    u32 i = 0;
+    if (!message)
+        message = "(null)";
+    while (i < WT_HISTORY_TEXT - 1 && message[i]) {
+        wt_history[wt_history_next][i] = message[i];
+        ++i;
+    }
+    wt_history[wt_history_next][i] = '\0';
+    wt_history_next = (wt_history_next + 1) % WT_HISTORY_CAPACITY;
+    if (wt_history_count < WT_HISTORY_CAPACITY)
+        ++wt_history_count;
+}
+
 void diagnostics_init(void) {
+    wt_initialized = true;
     if (wt_serial_ready)
         return;
 
@@ -73,6 +95,7 @@ void diagnostics_init(void) {
 }
 
 void diagnostics_log(const char *message) {
+    diagnostics_record(message);
     if (!wt_serial_ready)
         diagnostics_init();
 
@@ -163,4 +186,51 @@ void diagnostics_panic(
 
     for (;;)
         __asm__ volatile("cli; hlt");
+}
+u32 diagnostics_event_count(void) {
+    return wt_history_count;
+}
+
+u32 diagnostics_event_capacity(void) {
+    return WT_HISTORY_CAPACITY;
+}
+
+bool diagnostics_get_event(u32 index, char *buffer, u32 capacity) {
+    if (!buffer || capacity == 0 || index >= wt_history_count)
+        return false;
+    u32 oldest = (wt_history_next + WT_HISTORY_CAPACITY - wt_history_count) % WT_HISTORY_CAPACITY;
+    u32 slot = (oldest + index) % WT_HISTORY_CAPACITY;
+    u32 i = 0;
+    while (i + 1 < capacity && i < WT_HISTORY_TEXT - 1 && wt_history[slot][i]) {
+        buffer[i] = wt_history[slot][i];
+        ++i;
+    }
+    buffer[i] = '\0';
+    return true;
+}
+
+void diagnostics_clear_events(void) {
+    for (u32 i = 0; i < WT_HISTORY_CAPACITY; ++i) {
+        for (u32 j = 0; j < WT_HISTORY_TEXT; ++j)
+            wt_history[i][j] = '\0';
+    }
+    wt_history_count = 0;
+    wt_history_next = 0;
+}
+
+bool diagnostics_is_initialized(void) {
+    return wt_initialized;
+}
+
+bool diagnostics_selftest(void) {
+    const char expected[] = "Watchtower self-test event verified";
+    char actual[WT_HISTORY_TEXT];
+    diagnostics_log(expected);
+    u32 count = diagnostics_event_count();
+    if (count == 0 || !diagnostics_get_event(count - 1, actual, sizeof(actual)))
+        return false;
+    u32 i = 0;
+    while (expected[i] && actual[i] == expected[i])
+        ++i;
+    return expected[i] == '\0' && actual[i] == '\0';
 }

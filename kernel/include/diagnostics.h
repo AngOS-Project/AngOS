@@ -17,4 +17,11 @@ void diagnostics_panic(
     u64 fault_address
 );
 
+u32 diagnostics_event_count(void);
+u32 diagnostics_event_capacity(void);
+bool diagnostics_get_event(u32 index, char *buffer, u32 capacity);
+void diagnostics_clear_events(void);
+bool diagnostics_is_initialized(void);
+bool diagnostics_selftest(void);
+
 #endif

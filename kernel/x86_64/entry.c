@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <diagnostics.h>
 #include "../fs/FAT.h"
 
 static int strcmp_local(
@@ -1210,6 +1211,117 @@ cleanup:
     }
 }
 
+static void shell_wt_status(void) {
+    terminal_write("=== AngOS Watchtower Status ===\n");
+    terminal_write("Diagnostics: ");
+    terminal_write(diagnostics_is_initialized() ? "INITIALIZED\n" : "NOT INITIALIZED\n");
+    terminal_write("Buffered events: ");
+    print_u64_decimal(diagnostics_event_count());
+    terminal_write(" / ");
+    print_u64_decimal(diagnostics_event_capacity());
+    terminal_write("\n");
+}
+
+static void shell_wt_log(u32 requested) {
+    u32 count = diagnostics_event_count();
+    u32 limit = requested;
+    if (limit > diagnostics_event_capacity())
+        limit = diagnostics_event_capacity();
+    if (limit > count)
+        limit = count;
+    terminal_write("=== AngOS Watchtower Event History ===\n");
+    if (count == 0) {
+        terminal_write("No diagnostic events recorded.\n");
+        return;
+    }
+    for (u32 i = count - limit; i < count; ++i) {
+        char event[96];
+        if (diagnostics_get_event(i, event, sizeof(event))) {
+            terminal_write("[");
+            print_u64_decimal((u64)i + 1);
+            terminal_write("] ");
+            terminal_write(event);
+            terminal_write("\n");
+        }
+    }
+}
+
+static void shell_wt(const char *argument) {
+    char command[64];
+    u32 length = 0;
+    if (!argument)
+        argument = "";
+    while (argument[length] && length < sizeof(command) - 1) {
+        command[length] = argument[length];
+        ++length;
+    }
+    if (argument[length]) {
+        terminal_write("wt: command is too long. Type 'h wt' for usage.\n");
+        return;
+    }
+    command[length] = '\0';
+    u32 start = 0;
+    while (command[start] == ' ' || command[start] == '\t')
+        ++start;
+    while (length > start && (command[length - 1] == ' ' || command[length - 1] == '\t'))
+        command[--length] = '\0';
+    const char *sub = command + start;
+    if (!*sub || strcmp_local(sub, "status") == 0) {
+        shell_wt_status();
+        return;
+    }
+    if (strcmp_local(sub, "log") == 0) {
+        shell_wt_log(10);
+        return;
+    }
+    if (starts_with_local(sub, "log ")) {
+        const char *p = sub + 4;
+        while (*p == ' ' || *p == '\t')
+            ++p;
+        u32 limit = 0;
+        bool valid = *p >= '0' && *p <= '9';
+        while (*p >= '0' && *p <= '9') {
+            u32 digit = (u32)(*p - '0');
+            if (limit > 100000) {
+                valid = false;
+                break;
+            }
+            limit = limit * 10 + digit;
+            ++p;
+        }
+        while (*p == ' ' || *p == '\t')
+            ++p;
+        if (!valid || *p || limit == 0) {
+            terminal_write("Usage: wt log [count]\n");
+            return;
+        }
+        shell_wt_log(limit);
+        return;
+    }
+    if (strcmp_local(sub, "clear") == 0) {
+        diagnostics_clear_events();
+        terminal_write("Watchtower in-memory event history cleared.\n");
+        terminal_write("The host-side serial log was not changed.\n");
+        return;
+    }
+    if (strcmp_local(sub, "selftest") == 0) {
+        terminal_write("Running Watchtower event-history self-test...\n");
+        if (diagnostics_selftest())
+            terminal_write("Watchtower self-test: PASS\n");
+        else
+            terminal_write("Watchtower self-test: FAILED\n");
+        return;
+    }
+    if (strcmp_local(sub, "report") == 0) {
+        terminal_write("=== AngOS Watchtower Report ===\n");
+        shell_wt_status();
+        shell_wt_log(10);
+        terminal_write("Fatal panic output is available in the serial log.\n");
+        return;
+    }
+    terminal_write("wt: unknown subcommand. Type 'h wt' for usage.\n");
+}
+
 static void shell_help(const char *topic) {
     if (!topic)
         topic = "";
@@ -1219,10 +1331,12 @@ static void shell_help(const char *topic) {
 
     if (!*topic) {
         terminal_write("ANGOS COMMAND REFERENCE\n");
-        terminal_write("Use: h <command> for detailed command help.\n\n");
+        terminal_write("Use: h [command] to list commands or display detailed help.\n");
+        terminal_write("Notation: <required> must be supplied; [optional] may be omitted.\n");
+        terminal_write("          Do not type the angle brackets or square brackets.\n\n");
         terminal_write("Command   Usage                  Description\n");
         terminal_write("--------  ---------------------  ------------------------------\n");
-        terminal_write("h         h <command>            Show detailed command help\n");
+        terminal_write("h         h [command]             List commands or show detailed help\n");
         terminal_write("cls       cls                    Clear the terminal\n");
         terminal_write("ver       ver                    Display the OS version\n");
         terminal_write("disk      disk                   Detect the primary disk\n");
@@ -1233,10 +1347,11 @@ static void shell_help(const char *topic) {
         terminal_write("ct        ct <file>              Display a file\n");
         terminal_write("stat      stat <path>            Show file or directory details\n");
         terminal_write("nw        nw <filename>          Create an empty file\n");
-        terminal_write("ec        ec <text>              Print text to the terminal\n");
-        terminal_write("ed        ed <file> <action>     Edit one line of a file\n");
-        terminal_write("cp        cp <source> <dest>     Copy a file\n");
+        terminal_write("ec        ec [text]               Print text or a blank line\n");
+        terminal_write("ed        ed <file> <action> [text] Edit or remove one line\n");
+        terminal_write("cp        cp <source-file> <destination-name> Copy a file\n");
         terminal_write("rm        rm <filename>          Delete a file\n");
+        terminal_write("wt        wt [subcommand]        Inspect Watchtower diagnostics\n");
         terminal_write("fat       fat                    Detect the filesystem type\n");
         terminal_write("fatls     fatls                  Legacy FAT directory listing\n");
         terminal_write("fatcat    fatcat <file>          Legacy FAT file reader\n");
@@ -1248,9 +1363,10 @@ static void shell_help(const char *topic) {
         strcmp_local(topic, "help") == 0) {
         terminal_write("Command : h (short for help)\n");
         terminal_write("Purpose : Display the command reference or detailed help for one command.\n");
-        terminal_write("Usage   : h <command>\n");
-        terminal_write("Details : With no argument, h lists available commands. With a command\n");
-        terminal_write("          name, it displays that command's purpose, syntax and examples.\n");
+        terminal_write("Usage   : h [command]\n");
+        terminal_write("Details : With no argument, h displays the command reference.\n");
+        terminal_write("          Supply a command name to view its purpose, usage, options and\n");
+        terminal_write("          examples. The reference explains required and optional arguments.\n");
         terminal_write("Example : h ed\n");
 
     } else if (strcmp_local(topic, "cls") == 0) {
@@ -1335,27 +1451,29 @@ static void shell_help(const char *topic) {
     } else if (strcmp_local(topic, "ec") == 0) {
         terminal_write("Command : ec (short for echo)\n");
         terminal_write("Purpose : Print the provided text to the terminal.\n");
-        terminal_write("Usage   : ec <text>\n");
-        terminal_write("Details : Echo writes to the screen only. It does not create a file\n");
-        terminal_write("          or save the text to disk.\n");
+        terminal_write("Usage   : ec [text]\n");
+        terminal_write("Details : With text, ec prints it to the screen. With no text,\n");
+        terminal_write("          it prints a blank line. It never creates or saves a file.\n");
         terminal_write("Example : ec Hello from AngOS\n");
 
     } else if (strcmp_local(topic, "ed") == 0) {
         terminal_write("Command : ed (short for edit)\n");
         terminal_write("Purpose : Insert, replace or delete one line in an existing file.\n");
-        terminal_write("Usage   : ed <file> <action>\n");
-        terminal_write("Details : Line numbers start at 1. Ordinary text may be unquoted;\n");
-        terminal_write("          enclosing text in double quotes is optional.\n\n");
-        terminal_write("  ed <file> +N text    Insert text before line N\n");
+        terminal_write("Usage   : ed <file> <action> [text]\n");
+        terminal_write("Details : The file and action are required. Text is needed for + and =\n");
+        terminal_write("          actions, but must be omitted for - actions. Line numbers start\n");
+        terminal_write("          at 1. Use ordinary text or put it in double quotes.\n\n");
+        terminal_write("  ed <file> +<line> <text> Insert text before line <line>\n");
         terminal_write("  ed <file> + text     Append a line at the end\n");
         terminal_write("  ed <file> +0 text    Insert at the beginning\n");
-        terminal_write("  ed <file> =N text    Replace line N\n");
-        terminal_write("  ed <file> -N         Delete line N\n\n");
-        terminal_write("Details : +N inserts before the numbered line. If N is beyond the\n");
-        terminal_write("          end of the file, the line is appended. +0 means the start.\n");
-        terminal_write("          =N replaces an existing line; -N deletes that line and\n");
-        terminal_write("          does not accept text. This editor is line-based and does\n");
-        terminal_write("          not currently support ranges or multi-line editing.\n\n");
+        terminal_write("  ed <file> =<line> <text> Replace line <line>\n");
+        terminal_write("  ed <file> -<line>       Delete line <line>\n\n");
+        terminal_write("Details : +<line> inserts before that line. If the line is beyond the\n");
+        terminal_write("          end of the file, text is appended. +0 inserts at the start.\n");
+        terminal_write("          =<line> replaces an existing line; -<line> deletes that line.\n");
+        terminal_write("          Type digits for the line number, not the word line or brackets.\n");
+        terminal_write("          Deletion takes no text. Ranges and multi-line editing are not\n");
+        terminal_write("          supported.\n\n");
         terminal_write("Examples: ed notes.txt + First line\n");
         terminal_write("          ed notes.txt +2 A new second line\n");
         terminal_write("          ed notes.txt =1 Updated first line\n");
@@ -1383,6 +1501,43 @@ static void shell_help(const char *topic) {
         terminal_write("          Deletion is permanent; there is no recycle bin or undo.\n");
         terminal_write("          If disk I/O fails, inspect the filesystem before continuing.\n");
         terminal_write("Example : rm notes.txt\n");
+    } else if (strcmp_local(topic, "wt") == 0 || strcmp_local(topic, "watchtower") == 0) {
+        terminal_write("Command : wt (AngOS Watchtower)\n");
+        terminal_write("Alias   : watchtower\n");
+        terminal_write("Purpose : Inspect Watchtower diagnostics, system health and recent\n");
+        terminal_write("          recorded events from inside the AngOS shell.\n");
+        terminal_write("Usage   : wt [subcommand]\n");
+        terminal_write("Details : With no subcommand, wt displays status. History is kept\n");
+        terminal_write("          in a fixed-size in-memory buffer containing up to 32 events.\n");
+        terminal_write("          Events are not preserved across a reboot. Fatal panic reports\n");
+        terminal_write("          are sent to serial output instead of this shell history.\n\n");
+        terminal_write("Argument notation: <required> must be supplied; [optional] may be\n");
+        terminal_write("          omitted. Do not type the brackets themselves.\n\n");
+        terminal_write("Subcommands:\n");
+        terminal_write("  wt status\n");
+        terminal_write("      Show whether diagnostics initialized and how many events are\n");
+        terminal_write("      currently buffered. This command does not change system state.\n\n");
+        terminal_write("  wt log [count]\n");
+        terminal_write("      Display recent events from oldest to newest. Count is optional;\n");
+        terminal_write("      it defaults to 10, must be a positive decimal number, and is\n");
+        terminal_write("      limited to the newest 32 available events.\n\n");
+        terminal_write("  wt clear\n");
+        terminal_write("      Erase the in-memory event history. This does not delete, truncate\n");
+        terminal_write("      or alter angos-serial.log or QEMU's event log.\n\n");
+        terminal_write("  wt selftest\n");
+        terminal_write("      Add a test event and check that Watchtower can retrieve it. The\n");
+        terminal_write("      test itself adds an entry to the history.\n\n");
+        terminal_write("  wt report\n");
+        terminal_write("      Display the current status and up to 10 recent diagnostic events.\n");
+        terminal_write("      It prints a report on screen but does not save it to a file.\n\n");
+        terminal_write("Examples:\n");
+        terminal_write("  wt\n");
+        terminal_write("  wt status\n");
+        terminal_write("  wt log\n");
+        terminal_write("  wt log 20\n");
+        terminal_write("  wt selftest\n");
+        terminal_write("  wt report\n");
+        terminal_write("  wt clear\n");
 
     } else if (strcmp_local(topic, "fat") == 0) {
         terminal_write("Command : fat\n");
@@ -1793,6 +1948,13 @@ void execute_command(const char *cmd) {
         shell_rm("");
     } else if (starts_with_local(cmd, "rm ")) {
         shell_rm(cmd + 3);
+    } else if (strcmp_local(cmd, "wt") == 0 || strcmp_local(cmd, "watchtower") == 0) {
+        shell_wt("");
+    } else if (starts_with_local(cmd, "wt ")) {
+        shell_wt(cmd + 3);
+    } else if (starts_with_local(cmd, "watchtower ")) {
+        shell_wt(cmd + 11);
+
     } else if (
         strcmp_local(cmd, "fat") == 0
     ) {
