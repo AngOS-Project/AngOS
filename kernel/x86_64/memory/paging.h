@@ -16,6 +16,7 @@
 void map_page(void *phys, void *virt);
 void map_2mb_page(void *phys, void *virt);
 void *find_physaddr(void *virt);
+bool unmap_page(void *virt);
 void init_paging(void);
 
 extern void load_pml4(struct table *pml4);

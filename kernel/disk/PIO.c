@@ -1,4 +1,5 @@
-#include <types.h>
+#include <types.h>
+#include <diagnostics.h>
 #include <string.h>
 #include <stdlib.h>
 #include <cpu/IO.h>
@@ -55,14 +56,11 @@ static bool ata_wait_not_busy(u16 port) {
 static bool ata_wait_drq(u16 port) {
     for (u32 i = 0; i < 1000000; ++i) {
         u8 status = inb(port + STS);
-
-        if (status & ERROR)
+        if (status & (ERROR | DF))
             return false;
-
         if ((status & BSY) == 0 && (status & DRQ))
             return true;
     }
-
     return false;
 }
 
@@ -209,22 +207,24 @@ bool disk_write_sector(
     return !(status & (ERROR | DF));
 }
 
-void readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
+bool readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
+    if (!buffer || count == 0 || disk >= DISKS)
+        return false;
+
     u16 *buf = (u16 *)buffer;
+    u16 port = disk >= 2 ? SECOND : PRIMARY;
+    u8 outcmd = disk % 2 ? 0x50 : 0x40;
 
-    u16 port = PRIMARY;
-    u8 outcmd = 0x40;
-
-    if (disk >= 2)
-        port = SECOND;
-
-    if (disk % 2)
-        outcmd = 0x50;
-
-    while (inb(port + STS) & BSY) {
+    if (!ata_wait_not_busy(port)) {
+        memset(buffer, 0, (size_t)count * SECTOR_SIZE);
+        diagnostics_log("Disk: multi-sector read timed out before command issue.");
+        return false;
     }
 
     outb(port + DHR, outcmd);
+    for (u8 i = 0; i < 5; ++i)
+        inb(port + STS);
+
     outb(port + SEC, (u8)(count >> 8));
     outb(port + LBALO, (u8)(LBA >> 24));
     outb(port + LBAMID, (u8)(LBA >> 32));
@@ -235,38 +235,50 @@ void readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
     outb(port + LBAHI, (u8)(LBA >> 16));
     outb(port + CMD, READ);
 
-    for (u16 i = 0; i < count; ++i) {
+    for (u32 sector = 0; sector < count; ++sector) {
         smalldelay();
-
-        while (inb(port + STS) & BSY) {
+        if (!ata_wait_drq(port)) {
+            memset(buffer, 0, (size_t)count * SECTOR_SIZE);
+            diagnostics_log("Disk: multi-sector read timed out or reported an ATA error.");
+            return false;
         }
-
-        while (!(inb(port + STS) & DRQ)) {
-        }
-
-        for (u16 j = 0; j < 256; ++j) {
-            *buf = inw(port + DAT);
-            ++buf;
-        }
+        for (u32 word = 0; word < 256; ++word)
+            buf[sector * 256 + word] = inw(port + DAT);
     }
+
+    if (!ata_wait_not_busy(port)) {
+        memset(buffer, 0, (size_t)count * SECTOR_SIZE);
+        diagnostics_log("Disk: multi-sector read did not finish before timeout.");
+        return false;
+    }
+
+    u8 status = inb(port + STS);
+    if (status & (ERROR | DF)) {
+        memset(buffer, 0, (size_t)count * SECTOR_SIZE);
+        diagnostics_log("Disk: multi-sector read ended with an ATA device error.");
+        return false;
+    }
+
+    return true;
 }
 
-void writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
-    u16 *buf = (u16 *)buffer;
+bool writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
+    if (!buffer || count == 0 || disk >= DISKS)
+        return false;
 
-    u16 port = PRIMARY;
-    u8 outcmd = 0x40;
+    const u16 *buf = (const u16 *)buffer;
+    u16 port = disk >= 2 ? SECOND : PRIMARY;
+    u8 outcmd = disk % 2 ? 0x50 : 0x40;
 
-    if (disk >= 2)
-        port = SECOND;
-
-    if (disk % 2)
-        outcmd = 0x50;
-
-    while (inb(port + STS) & BSY) {
+    if (!ata_wait_not_busy(port)) {
+        diagnostics_log("Disk: multi-sector write timed out before command issue.");
+        return false;
     }
 
     outb(port + DHR, outcmd);
+    for (u8 i = 0; i < 5; ++i)
+        inb(port + STS);
+
     outb(port + SEC, (u8)(count >> 8));
     outb(port + LBALO, (u8)(LBA >> 24));
     outb(port + LBAMID, (u8)(LBA >> 32));
@@ -277,20 +289,28 @@ void writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
     outb(port + LBAHI, (u8)(LBA >> 16));
     outb(port + CMD, WRITE);
 
-    for (u16 i = 0; i < count; ++i) {
+    for (u32 sector = 0; sector < count; ++sector) {
         smalldelay();
-
-        while (inb(port + STS) & BSY) {
+        if (!ata_wait_drq(port)) {
+            diagnostics_log("Disk: multi-sector write timed out or reported an ATA error.");
+            return false;
         }
-
-        while (!(inb(port + STS) & DRQ)) {
-        }
-
-        for (u16 j = 0; j < 256; ++j) {
-            outw(port + DAT, *buf);
-            ++buf;
-        }
+        for (u32 word = 0; word < 256; ++word)
+            outw(port + DAT, buf[sector * 256 + word]);
     }
+
+    if (!ata_wait_not_busy(port)) {
+        diagnostics_log("Disk: multi-sector write did not finish before timeout.");
+        return false;
+    }
+
+    u8 status = inb(port + STS);
+    if (status & (ERROR | DF)) {
+        diagnostics_log("Disk: multi-sector write ended with an ATA device error.");
+        return false;
+    }
+
+    return true;
 }
 
 void init_disk(void) {

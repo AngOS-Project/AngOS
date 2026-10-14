@@ -1,4 +1,5 @@
 #include <types.h>
+#include <diagnostics.h>
 #include <memory.h>
 #include <string.h>
 #include <globals.h>
@@ -9,47 +10,139 @@
 #define CEILING(a, b) (((a) + (b) - 1) / (b))
 #endif
 
+
+static void memory_merge_free_spaces(int heap) {
+        bool merged;
+        do {
+                merged = false;
+                for (int i = 0; i < FREE_SPACES && !merged; ++i) {
+                        if (freespace[heap][i].size == 0)
+                                continue;
+                        u64 i_start = (u64)freespace[heap][i].addr;
+                        u64 i_end = i_start + freespace[heap][i].size;
+                        for (int j = i + 1; j < FREE_SPACES; ++j) {
+                                if (freespace[heap][j].size == 0)
+                                        continue;
+                                u64 j_start = (u64)freespace[heap][j].addr;
+                                u64 j_end = j_start + freespace[heap][j].size;
+                                if (i_end == j_start) {
+                                        freespace[heap][i].size += freespace[heap][j].size;
+                                        freespace[heap][j].addr = 0;
+                                        freespace[heap][j].size = 0;
+                                        merged = true;
+                                        break;
+                                }
+                                if (j_end == i_start) {
+                                        freespace[heap][i].addr = freespace[heap][j].addr;
+                                        freespace[heap][i].size += freespace[heap][j].size;
+                                        freespace[heap][j].addr = 0;
+                                        freespace[heap][j].size = 0;
+                                        merged = true;
+                                        break;
+                                }
+                        }
+                }
+        } while (merged);
+}
+
+static bool memory_add_free_space(int heap, u64 address, size_t size) {
+        int empty = -1;
+        bool attached = false;
+        for (int i = 0; i < FREE_SPACES; ++i) {
+                if (freespace[heap][i].size == 0) {
+                        if (empty < 0)
+                                empty = i;
+                        continue;
+                }
+                u64 start = (u64)freespace[heap][i].addr;
+                u64 end = start + freespace[heap][i].size;
+                if (end == address) {
+                        freespace[heap][i].size += size;
+                        attached = true;
+                        break;
+                }
+                if (address + size == start) {
+                        freespace[heap][i].addr = (void *)address;
+                        freespace[heap][i].size += size;
+                        attached = true;
+                        break;
+                }
+        }
+        if (!attached) {
+                if (empty < 0) {
+                        memory_merge_free_spaces(heap);
+                        for (int i = 0; i < FREE_SPACES; ++i) {
+                                if (freespace[heap][i].size == 0) {
+                                        empty = i;
+                                        break;
+                                }
+                        }
+                }
+                if (empty < 0)
+                        return false;
+                freespace[heap][empty].addr = (void *)address;
+                freespace[heap][empty].size = size;
+        }
+        memory_merge_free_spaces(heap);
+        return true;
+}
+
 /*
 	Allocate virtual memory from a heap
 */
 void *malloc_heap(size_t size, int heap) {
-	/* Error checking */
-	if (heap >= HEAPS || size == 0)
-		return 0;
+        if (heap < 0 || heap >= HEAPS || size == 0)
+                return 0;
 
-	/* Look through freespace for large enough space */
-	int space;
-	for (space = 0; space < FREE_SPACES; ++space)
-		if (freespace[heap][space].size >= size)
-			goto exit1;
-	return 0;
-exit1:;
+        int allocation = -1;
+        for (int i = 0; i < ALLOCATIONS; ++i) {
+                if (allocations[heap][i].size == 0) {
+                        allocation = i;
+                        break;
+                }
+        }
+        if (allocation < 0) {
+                diagnostics_log("Memory: allocation table is full.");
+                return 0;
+        }
 
-	/* Save address (this address will be returned) */
-	void *const addr = freespace[heap][space].addr;
+        int space = -1;
+        for (int i = 0; i < FREE_SPACES; ++i) {
+                if (freespace[heap][i].size >= size) {
+                        space = i;
+                        break;
+                }
+        }
+        if (space < 0)
+                return 0;
 
-	/* Shrink the freespace size */
-	freespace[heap][space].addr += size;
-	freespace[heap][space].size -= size;
+        void *addr = freespace[heap][space].addr;
+        freespace[heap][space].addr = (void *)((u64)addr + size);
+        freespace[heap][space].size -= size;
+        allocations[heap][allocation].addr = addr;
+        allocations[heap][allocation].size = size;
 
-	/* Mark allocation in table */
-	int alloc;
-	for (alloc = 0; alloc < ALLOCATIONS; ++alloc)
-		if (allocations[heap][alloc].size == 0)
-			goto exit2;
-	return 0;
-	exit2:
-
-	allocations[heap][alloc].addr = addr;
-	allocations[heap][alloc].size = size;
-
-	/* Map pages to that part if no pages are mapped there already */
-	size_t pages = CEILING((size_t)(addr + size), PAGE_SIZE) - (size_t)(addr) / PAGE_SIZE;
-	for (size_t i = 0; i < pages; ++i) {
-		if (!find_physaddr(addr + i * PAGE_SIZE))
-			map_page(phys_page_alloc(), addr + i * PAGE_SIZE);
-	}
-	return addr;
+        u64 first_page = (u64)addr & ~(u64)(PAGE_SIZE - 1);
+        u64 end_page = ((u64)addr + size + PAGE_SIZE - 1) & ~(u64)(PAGE_SIZE - 1);
+        for (u64 page_addr = first_page; page_addr < end_page; page_addr += PAGE_SIZE) {
+                void *virt = (void *)page_addr;
+                if (find_physaddr(virt))
+                        continue;
+                void *phys = phys_page_alloc();
+                if (!phys) {
+                        diagnostics_log("Memory: no physical page was available for a heap mapping.");
+                        free(addr);
+                        return 0;
+                }
+                map_page(phys, virt);
+                if (!find_physaddr(virt)) {
+                        phys_page_free(phys);
+                        diagnostics_log("Memory: virtual page mapping failed during heap allocation.");
+                        free(addr);
+                        return 0;
+                }
+        }
+        return addr;
 }
 
 /*
@@ -63,69 +156,61 @@ void *malloc(size_t size) {
 	Frees memory allocated from malloc
 */
 void free(void *addr) {
-	/* Heap/bounds checker */
-	int heap;
-	if (addr >= kernel_heap && addr < kernel_stack)
-		heap = 0;
-	else if (addr >= userspace_heap && addr < userspace_stack)
-		heap = 1;
-	else
-		return;
+        if (!addr)
+                return;
 
-	/* Find the allocation in the allocs table to find the size */
-	int alloc;
-	size_t size;
-	for (alloc = 0; alloc < ALLOCATIONS; ++alloc)
-		if (addr == allocations[heap][alloc].addr)
-			goto exit1;
-	return;
-	exit1:
-	size = allocations[heap][alloc].size;
-	allocations[heap][alloc].addr = 0;
-	allocations[heap][alloc].size = 0;
-	bool returned = false;
-	for (int i = 0; i < FREE_SPACES; ++i) {
-		/* Memory is behind freespace */
-		if (addr + size == freespace[heap][i].addr) {
-			freespace[heap][i].addr -= size;
-			freespace[heap][i].size += size;
-			returned = true;
-			break;
-		}
-		/* Memory is after freespace */
-		if (addr == freespace[heap][i].addr + freespace[heap][i].size) {
-			freespace[heap][i].size += size;
-			returned = true;
-			break;
-		}
-	}
-	if (!returned) {
-		for (int i = 0; i < FREE_SPACES; ++i) {
-			if (freespace[heap][i].size == 0) {
-				freespace[heap][i].addr = addr;
-				freespace[heap][i].size = size;
-				goto exit2;
-			}
-		}
-		return;
-	}
-	exit2:;
+        u64 address = (u64)addr;
+        int heap = -1;
+        if (address >= (u64)kernel_heap && address < (u64)kernel_stack)
+                heap = 0;
+        else if (address >= (u64)userspace_heap && address < (u64)userspace_stack)
+                heap = 1;
+        else
+                return;
 
-	/* Free pages (if there is no other memory in the page) */
-	size_t pages = CEILING((size_t) addr + size, PAGE_SIZE) - (size_t) addr / PAGE_SIZE;
-	bool sused = false, eused = false;
-	for (int i = 0; i < ALLOCATIONS; ++i) {
-		if (((size_t) addr / PAGE_SIZE) * PAGE_SIZE ==
-			(((size_t) allocations[heap][i].addr + allocations[heap][i].size - 1) / PAGE_SIZE) * PAGE_SIZE)
-			sused = true;
-		if ((((size_t) addr + size - 1) / PAGE_SIZE) * PAGE_SIZE ==
-			((size_t) allocations[heap][i].addr / PAGE_SIZE) * PAGE_SIZE)
-			eused = true;
-	}
-	if (!sused) phys_page_free(find_physaddr(addr));
-	if (!eused) phys_page_free(find_physaddr(addr + size - 1));
-	for (size_t i = 1; i < pages - 1; ++i)
-		phys_page_free(find_physaddr(addr + i * PAGE_SIZE));
+        int allocation = -1;
+        size_t size = 0;
+        for (int i = 0; i < ALLOCATIONS; ++i) {
+                if (allocations[heap][i].size != 0 && allocations[heap][i].addr == addr) {
+                        allocation = i;
+                        size = allocations[heap][i].size;
+                        break;
+                }
+        }
+        if (allocation < 0)
+                return;
+
+        if (!memory_add_free_space(heap, address, size)) {
+                diagnostics_log("Memory: free-space table is full; allocation remains tracked.");
+                return;
+        }
+
+        allocations[heap][allocation].addr = 0;
+        allocations[heap][allocation].size = 0;
+
+        u64 first_page = address & ~(u64)(PAGE_SIZE - 1);
+        u64 end_page = (address + size + PAGE_SIZE - 1) & ~(u64)(PAGE_SIZE - 1);
+        for (u64 page_addr = first_page; page_addr < end_page; page_addr += PAGE_SIZE) {
+                bool used = false;
+                u64 page_end = page_addr + PAGE_SIZE;
+                for (int i = 0; i < ALLOCATIONS; ++i) {
+                        if (allocations[heap][i].size == 0)
+                                continue;
+                        u64 other_start = (u64)allocations[heap][i].addr;
+                        u64 other_end = other_start + allocations[heap][i].size;
+                        if (other_start < page_end && other_end > page_addr) {
+                                used = true;
+                                break;
+                        }
+                }
+                if (used)
+                        continue;
+                void *phys = find_physaddr((void *)page_addr);
+                if (!phys)
+                        continue;
+                if (unmap_page((void *)page_addr))
+                        phys_page_free((void *)((u64)phys & ~(u64)(PAGE_SIZE - 1)));
+        }
 }
 
 
@@ -372,22 +457,9 @@ u64 phys_memory_free_pages(void) {
 /*
  * Combines contiguous free spaces into one entry
 */
-void refresh_freespace() {
-	for (int i = 0; i < HEAPS; ++i) {
-		for (int j = 0; j < FREE_SPACES; ++j) {
-			void *end_addr = freespace[i][j].addr + freespace[i][j].size;
-			for (int k = 0; k < FREE_SPACES; ++k) {
-				if (freespace[i][k].addr == end_addr) {
-					/* Combine the sizes */
-					freespace[i][j].size += freespace[i][k].size;
-
-					/* Delete old entry */
-					freespace[i][k].addr = 0;
-					freespace[i][k].size = 0;
-				}
-			}
-		}
-	}
+void refresh_freespace(void) {
+        for (int heap = 0; heap < HEAPS; ++heap)
+                memory_merge_free_spaces(heap);
 }
 
 void free_pages(const void *virt, size_t pages) {

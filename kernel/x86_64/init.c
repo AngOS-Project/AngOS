@@ -54,31 +54,38 @@ void init(tosaithe_loader_data *loader_data) {
         kernel_size = highest_vaddr - lowest_vaddr;
 
         terminal_init();
+        diagnostics_log("Boot checkpoint: terminal initialized.");
         diagnostics_log("Boot: framebuffer console initialized.");
 
         terminal_write("ANGOS KERNEL STARTED\n");
         terminal_write("PHYSICAL MEMORY INITIALIZING\n");
 
         phys_memory_init(loader_data);
+        diagnostics_log("Boot checkpoint: physical memory initialized.");
         diagnostics_log("Boot: initializing physical memory.");
         terminal_write("PHYSICAL MEMORY OK\n");
 
         init_gdt();
+        diagnostics_log("Boot checkpoint: GDT initialized.");
         diagnostics_log("Boot: GDT initialized.");
         terminal_write("GDT OK\n");
 
         init_idt();
+        diagnostics_log("Boot checkpoint: IDT initialized.");
         diagnostics_log("Boot: IDT initialized.");
         terminal_write("IDT OK\n");
 
         init_memory();
+        diagnostics_log("Boot checkpoint: paging and heap initialized.");
         diagnostics_log("Boot: paging initialization returned.");
         terminal_write("PAGING OK\n");
 
         keyboard_init();
+        diagnostics_log("Boot checkpoint: keyboard initialized.");
         diagnostics_log("Boot: keyboard initialized.");
 
         init_timer();
+        diagnostics_log("Boot checkpoint: timer initialized.");
         diagnostics_log("Boot: timer initialized.");
         terminal_write("PIT OK\n");
 
@@ -96,6 +103,7 @@ void init(tosaithe_loader_data *loader_data) {
 
         diagnostics_log("Boot: initializing disk/filesystem.");
         init_disk();
+        diagnostics_log("Boot checkpoint: disk and filesystem initialization finished.");
         diagnostics_log("Boot: disk initialization returned.");
 
         if (disktable &&
@@ -115,6 +123,7 @@ void init(tosaithe_loader_data *loader_data) {
 
         diagnostics_log("Boot: kernel initialization complete.");
         terminal_write("ANGOS IS RUNNING\n");
+        diagnostics_log("Boot checkpoint: kernel initialization complete.");
 
         __asm__ volatile("sti");
 }

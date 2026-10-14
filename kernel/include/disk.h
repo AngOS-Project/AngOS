@@ -32,8 +32,8 @@ typedef struct {
 	unsigned int partition;
 } volume_t;
 
-void readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk);
-void writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk);
+bool readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk);
+bool writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk);
 void init_disk();
 
 extern diskdata *disktable;

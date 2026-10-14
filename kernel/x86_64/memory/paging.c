@@ -151,6 +151,33 @@ void *find_physaddr(void *virt) {
         );
 }
 
+bool unmap_page(void *virt) {
+        u64 v = (u64)virt;
+        unsigned pml4_idx = (v >> 39) & 0x1FF;
+        unsigned pdpt_idx = (v >> 30) & 0x1FF;
+        unsigned pd_idx = (v >> 21) & 0x1FF;
+        unsigned pt_idx = (v >> 12) & 0x1FF;
+
+        if (!(pml4.entry[pml4_idx] & FLAG_PRESENT))
+                return false;
+
+        struct table *pdpt = (struct table *)(pml4.entry[pml4_idx] & ADDR_MASK);
+        if (!(pdpt->entry[pdpt_idx] & FLAG_PRESENT))
+                return false;
+
+        struct table *pd = (struct table *)(pdpt->entry[pdpt_idx] & ADDR_MASK);
+        if (!(pd->entry[pd_idx] & FLAG_PRESENT) || (pd->entry[pd_idx] & FLAG_PS))
+                return false;
+
+        struct table *pt = (struct table *)(pd->entry[pd_idx] & ADDR_MASK);
+        if (!(pt->entry[pt_idx] & FLAG_PRESENT))
+                return false;
+
+        pt->entry[pt_idx] &= ~FLAG_PRESENT;
+        __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
+        return true;
+}
+
 void init_paging(void) {
         memset(&pml4, 0, sizeof(pml4));
 

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <memory.h>
 #include <diagnostics.h>
 #include "../fs/FAT.h"
 
@@ -412,13 +413,11 @@ static void shell_nw(
 
                 sector[off + 11] =
                     ARCHIVE;
-
-                writesectorpio(
-                    root_lba + s,
-                    1,
-                    sector,
-                    0
-                );
+                if (!writesectorpio(root_lba + s, 1, sector, 0)) {
+                    terminal_write("nw: disk write failed or timed out
+");
+                    return;
+                }
 
                 u8 verify[512];
 
@@ -1246,6 +1245,182 @@ static void shell_wt_log(u32 requested) {
     }
 }
 
+static void shell_wt_release_blocks(void **blocks, u32 count) {
+    while (count > 0) {
+        --count;
+        if (blocks[count]) {
+            free(blocks[count]);
+            blocks[count] = 0;
+        }
+    }
+}
+
+static bool shell_wt_memory_test(void) {
+    const u32 sizes[] = {13, 507, 4096, 4103, 8192};
+    const u32 block_count = sizeof(sizes) / sizeof(sizes[0]);
+    u64 stable_free_pages = 0;
+
+    for (u32 round = 0; round < 17; ++round) {
+        void *blocks[5] = {0, 0, 0, 0, 0};
+        bool passed = true;
+
+        for (u32 i = 0; i < block_count; ++i) {
+            blocks[i] = malloc(sizes[i]);
+            if (!blocks[i]) {
+                passed = false;
+                break;
+            }
+        }
+
+        if (passed) {
+            for (u32 i = 0; i < block_count && passed; ++i) {
+                for (u32 offset = 0; offset < sizes[i]; offset += PAGE_SIZE) {
+                    if (!find_physaddr((u8 *)blocks[i] + offset)) {
+                        passed = false;
+                        break;
+                    }
+                }
+                if (!find_physaddr((u8 *)blocks[i] + sizes[i] - 1))
+                    passed = false;
+            }
+        }
+
+        if (passed) {
+            for (u32 i = 0; i < block_count; ++i) {
+                u8 *bytes = (u8 *)blocks[i];
+                for (u32 offset = 0; offset < sizes[i]; ++offset)
+                    bytes[offset] = (u8)(0xA5u ^ round ^ i ^ (offset & 0xFFu));
+            }
+
+            for (u32 i = 0; i < block_count && passed; ++i) {
+                u8 *bytes = (u8 *)blocks[i];
+                for (u32 offset = 0; offset < sizes[i]; ++offset) {
+                    u8 expected = (u8)(0xA5u ^ round ^ i ^ (offset & 0xFFu));
+                    if (bytes[offset] != expected) {
+                        passed = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        shell_wt_release_blocks(blocks, block_count);
+
+        if (!passed) {
+            diagnostics_log("Watchtower memory test: allocation, mapping or data verification failed.");
+            terminal_write("Memory allocation and paging test: FAILED\n");
+            return false;
+        }
+
+        u64 free_pages = phys_memory_free_pages();
+        if (round == 0) {
+            stable_free_pages = free_pages;
+        } else if (free_pages != stable_free_pages) {
+            diagnostics_log("Watchtower memory test: free-page count changed after a repeated allocation cycle.");
+            terminal_write("Memory allocation and paging test: FAILED\n");
+            terminal_write("Free-page count was not stable across repeated cycles.\n");
+            return false;
+        }
+    }
+
+    for (u32 round = 0; round < 32; ++round) {
+        u64 before = phys_memory_free_pages();
+        void *page = phys_page_alloc();
+        if (!page || (((u64)page & (PAGE_SIZE - 1)) != 0)) {
+            if (page)
+                phys_page_free(page);
+            diagnostics_log("Watchtower memory test: physical page allocation failed or returned an unaligned page.");
+            terminal_write("Physical page allocation test: FAILED\n");
+            return false;
+        }
+        if (phys_memory_free_pages() + 1 != before) {
+            phys_page_free(page);
+            diagnostics_log("Watchtower memory test: free-page counter did not decrease after allocation.");
+            terminal_write("Physical page accounting test: FAILED\n");
+            return false;
+        }
+        phys_page_free(page);
+        if (phys_memory_free_pages() != before) {
+            diagnostics_log("Watchtower memory test: physical page was not returned to the allocator.");
+            terminal_write("Physical page release test: FAILED\n");
+            return false;
+        }
+    }
+
+    diagnostics_log("Watchtower memory test: allocation, mapping, data verification and physical page reuse passed.");
+    terminal_write("Memory allocation test: PASS\n");
+    terminal_write("Virtual mapping test: PASS\n");
+    terminal_write("Physical page reuse test: PASS\n");
+    terminal_write("Repeated cycles: 17 heap cycles, 32 physical page cycles\n");
+    return true;
+}
+
+static bool shell_wt_filesystem_test(void) {
+    u64 blocks = 0;
+    u8 sector[512];
+
+    if (!disk_probe(&blocks)) {
+        diagnostics_log("Watchtower filesystem test: primary disk probe failed.");
+        terminal_write("Disk probe: FAILED\n");
+        return false;
+    }
+
+    if (!disk_read_sector(0, sector, 0)) {
+        diagnostics_log("Watchtower filesystem test: sector-zero read failed.");
+        terminal_write("Sector read: FAILED\n");
+        return false;
+    }
+
+    int type = fat_detect(0);
+    if (type != 12 && type != 16 && type != 32) {
+        diagnostics_log("Watchtower filesystem test: no supported FAT filesystem was detected.");
+        terminal_write("Filesystem detection: FAILED\n");
+        return false;
+    }
+    if (type != 16) {
+        diagnostics_log("Watchtower filesystem test: root-directory traversal currently requires FAT16 support.");
+        terminal_write("Filesystem detected, but root-directory testing currently requires FAT16.\n");
+        return false;
+    }
+
+    DIR *dir = opendir("|A/");
+    if (!dir) {
+        diagnostics_log("Watchtower filesystem test: root directory could not be opened.");
+        terminal_write("Root directory open: FAILED\n");
+        return false;
+    }
+
+    u32 entries = 0;
+    dirent *entry;
+    while ((entry = readdir(dir)) != 0) {
+        ++entries;
+        if (entries >= 4096) {
+            closedir(dir);
+            diagnostics_log("Watchtower filesystem test: root directory scan exceeded the safety limit.");
+            terminal_write("Root directory scan: FAILED\n");
+            return false;
+        }
+    }
+    closedir(dir);
+
+    terminal_write("Disk probe: PASS\n");
+    terminal_write("Sector-zero read: PASS\n");
+    terminal_write("Filesystem: FAT");
+    if (type == 12)
+        terminal_write("12\n");
+    else if (type == 16)
+        terminal_write("16\n");
+    else
+        terminal_write("32\n");
+    terminal_write("Root directory read: PASS\n");
+    terminal_write("Root entries read: ");
+    print_u64_decimal(entries);
+    terminal_write("\nDisk sectors reported: ");
+    print_u64_decimal(blocks);
+    terminal_write("\n");
+    diagnostics_log("Watchtower filesystem test: disk probe, sector read, FAT detection and root-directory traversal passed.");
+    return true;
+}
 static void shell_wt(const char *argument) {
     char command[64];
     u32 length = 0;
@@ -1301,7 +1476,6 @@ static void shell_wt(const char *argument) {
     if (strcmp_local(sub, "clear") == 0) {
         diagnostics_clear_events();
         terminal_write("Watchtower in-memory event history cleared.\n");
-        terminal_write("The host-side serial log was not changed.\n");
         return;
     }
     if (strcmp_local(sub, "selftest") == 0) {
@@ -1312,11 +1486,24 @@ static void shell_wt(const char *argument) {
             terminal_write("Watchtower self-test: FAILED\n");
         return;
     }
+    if (strcmp_local(sub, "memtest") == 0) {
+        terminal_write("Running repeated memory allocation, mapping and release tests...\n");
+        shell_wt_memory_test();
+        return;
+    }
+    if (strcmp_local(sub, "fscheck") == 0) {
+        terminal_write("Running read-only disk and filesystem checks...\n");
+        if (!shell_wt_filesystem_test())
+            terminal_write("Filesystem check: FAILED\n");
+        else
+            terminal_write("Filesystem check: PASS\n");
+        return;
+    }
     if (strcmp_local(sub, "report") == 0) {
         terminal_write("=== AngOS Watchtower Report ===\n");
         shell_wt_status();
         shell_wt_log(10);
-        terminal_write("Fatal panic output is available in the serial log.\n");
+        terminal_write("Fatal panic details are handled by the kernel panic reporter.\n");
         return;
     }
     terminal_write("wt: unknown subcommand. Type 'h wt' for usage.\n");
@@ -1336,7 +1523,7 @@ static void shell_help(const char *topic) {
         terminal_write("          Do not type the angle brackets or square brackets.\n\n");
         terminal_write("Command   Usage                  Description\n");
         terminal_write("--------  ---------------------  ------------------------------\n");
-        terminal_write("h         h [command]             List commands or show detailed help\n");
+        terminal_write("h         h [command]            Show general or command-specific help\n");
         terminal_write("cls       cls                    Clear the terminal\n");
         terminal_write("ver       ver                    Display the OS version\n");
         terminal_write("disk      disk                   Detect the primary disk\n");
@@ -1347,11 +1534,11 @@ static void shell_help(const char *topic) {
         terminal_write("ct        ct <file>              Display a file\n");
         terminal_write("stat      stat <path>            Show file or directory details\n");
         terminal_write("nw        nw <filename>          Create an empty file\n");
-        terminal_write("ec        ec [text]               Print text or a blank line\n");
+        terminal_write("ec        ec [text]              Print text or a blank line\n");
         terminal_write("ed        ed <file> <action> [text] Edit or remove one line\n");
         terminal_write("cp        cp <source-file> <destination-name> Copy a file\n");
         terminal_write("rm        rm <filename>          Delete a file\n");
-        terminal_write("wt        wt [subcommand]        Inspect Watchtower diagnostics\n");
+        terminal_write("wt        wt [subcommand]        Inspect diagnostics and run checks\n");
         terminal_write("fat       fat                    Detect the filesystem type\n");
         terminal_write("fatls     fatls                  Legacy FAT directory listing\n");
         terminal_write("fatcat    fatcat <file>          Legacy FAT file reader\n");
@@ -1504,38 +1691,45 @@ static void shell_help(const char *topic) {
     } else if (strcmp_local(topic, "wt") == 0 || strcmp_local(topic, "watchtower") == 0) {
         terminal_write("Command : wt (AngOS Watchtower)\n");
         terminal_write("Alias   : watchtower\n");
-        terminal_write("Purpose : Inspect Watchtower diagnostics, system health and recent\n");
-        terminal_write("          recorded events from inside the AngOS shell.\n");
+        terminal_write("Purpose : Inspect system diagnostics, recent events, memory handling\n");
+        terminal_write("          and read-only disk and filesystem checks.\n");
         terminal_write("Usage   : wt [subcommand]\n");
-        terminal_write("Details : With no subcommand, wt displays status. History is kept\n");
-        terminal_write("          in a fixed-size in-memory buffer containing up to 32 events.\n");
-        terminal_write("          Events are not preserved across a reboot. Fatal panic reports\n");
-        terminal_write("          are sent to serial output instead of this shell history.\n\n");
+        terminal_write("Details : With no subcommand, wt displays status. The in-memory event\n");
+        terminal_write("          history stores up to 32 events and is cleared on reboot.\n");
+        terminal_write("          The history is for events recorded while the kernel is running.\n\n");
         terminal_write("Argument notation: <required> must be supplied; [optional] may be\n");
         terminal_write("          omitted. Do not type the brackets themselves.\n\n");
         terminal_write("Subcommands:\n");
         terminal_write("  wt status\n");
         terminal_write("      Show whether diagnostics initialized and how many events are\n");
-        terminal_write("      currently buffered. This command does not change system state.\n\n");
+        terminal_write("      buffered. This command does not change system state.\n\n");
         terminal_write("  wt log [count]\n");
         terminal_write("      Display recent events from oldest to newest. Count is optional;\n");
-        terminal_write("      it defaults to 10, must be a positive decimal number, and is\n");
-        terminal_write("      limited to the newest 32 available events.\n\n");
+        terminal_write("      it defaults to 10 and is capped at the 32 events held in memory.\n");
+        terminal_write("      Count must be a positive decimal number.\n\n");
         terminal_write("  wt clear\n");
-        terminal_write("      Erase the in-memory event history. This does not delete, truncate\n");
-        terminal_write("      or alter angos-serial.log or QEMU's event log.\n\n");
+        terminal_write("      Clear only the in-memory event history. This does not change\n");
+        terminal_write("      disk contents or alter any separately captured diagnostic output.\n\n");
         terminal_write("  wt selftest\n");
-        terminal_write("      Add a test event and check that Watchtower can retrieve it. The\n");
-        terminal_write("      test itself adds an entry to the history.\n\n");
+        terminal_write("      Record a test event and verify that Watchtower can retrieve it.\n");
+        terminal_write("      The test event remains in the history until it is overwritten or cleared.\n\n");
+        terminal_write("  wt memtest\n");
+        terminal_write("      Repeat heap allocations, memory writes, data verification, virtual\n");
+        terminal_write("      mapping checks, and physical page allocation and release. This test\n");
+        terminal_write("      changes temporary memory contents but does not intentionally write files.\n\n");
+        terminal_write("  wt fscheck\n");
+        terminal_write("      Run read-only disk probing, sector-zero reading, FAT detection and\n");
+        terminal_write("      root-directory traversal. It does not create, edit or delete files.\n\n");
         terminal_write("  wt report\n");
-        terminal_write("      Display the current status and up to 10 recent diagnostic events.\n");
-        terminal_write("      It prints a report on screen but does not save it to a file.\n\n");
+        terminal_write("      Display the current status, up to 10 recent events and a note about\n");
+        terminal_write("      how fatal panic details are handled. It does not save a report to disk.\n\n");
         terminal_write("Examples:\n");
         terminal_write("  wt\n");
         terminal_write("  wt status\n");
-        terminal_write("  wt log\n");
         terminal_write("  wt log 20\n");
         terminal_write("  wt selftest\n");
+        terminal_write("  wt memtest\n");
+        terminal_write("  wt fscheck\n");
         terminal_write("  wt report\n");
         terminal_write("  wt clear\n");
 

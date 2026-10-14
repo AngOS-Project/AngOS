@@ -27,6 +27,7 @@ typedef struct {
 
 void init_memory();
 void map_page(void *phys, void *virt);
+bool unmap_page(void *virt);
 void *find_physaddr(void *virt);
 void *phys_page_alloc();
 void phys_page_free(void *addr);
