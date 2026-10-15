@@ -1420,6 +1420,71 @@ static bool shell_wt_filesystem_test(void) {
     diagnostics_log("Watchtower filesystem test: disk probe, sector read, FAT detection and root-directory traversal passed.");
     return true;
 }
+typedef struct {
+    const char *full;
+    const char *alias;
+} shell_alias_pair_t;
+
+static const shell_alias_pair_t shell_alias_pairs[] = {
+    {"help", "h"},
+    {"clear", "cls"},
+    {"version", "ver"},
+    {"list", "ls"},
+    {"cat", "ct"},
+    {"status", "stat"},
+    {"new", "nw"},
+    {"echo", "ec"},
+    {"edit", "ed"},
+    {"copy", "cp"},
+    {"remove", "rm"},
+    {"watchtower", "wt"}
+};
+
+static const char *shell_expand_first_word(const char *input, char *output, size_t capacity, bool watchtower_subcommand) {
+    if (!input)
+        input = "";
+    while (*input == ' ' || *input == '\t')
+        ++input;
+    const char *end = input;
+    while (*end && *end != ' ' && *end != '\t')
+        ++end;
+    size_t word_length = (size_t)(end - input);
+    if (word_length == 0 || word_length >= 32 || capacity == 0)
+        return input;
+    char word[32];
+    memcpy(word, input, word_length);
+    word[word_length] = '\0';
+    const char *replacement = 0;
+    if (watchtower_subcommand) {
+        if (strcmp_local(word, "lg") == 0)
+            replacement = "log";
+        else if (strcmp_local(word, "cls") == 0)
+            replacement = "clear";
+        else if (strcmp_local(word, "rp") == 0)
+            replacement = "report";
+    } else {
+        for (u32 i = 0; i < sizeof(shell_alias_pairs) / sizeof(shell_alias_pairs[0]); ++i) {
+            if (strcmp_local(word, shell_alias_pairs[i].full) == 0) {
+                replacement = shell_alias_pairs[i].alias;
+                break;
+            }
+        }
+    }
+    if (!replacement)
+        return input;
+    size_t replacement_length = 0;
+    while (replacement[replacement_length])
+        ++replacement_length;
+    size_t suffix_length = 0;
+    while (end[suffix_length])
+        ++suffix_length;
+    if (replacement_length + suffix_length >= capacity)
+        return input;
+    memcpy(output, replacement, replacement_length);
+    memcpy(output + replacement_length, end, suffix_length + 1);
+    return output;
+}
+
 static void shell_wt(const char *argument) {
     char command[64];
     u32 length = 0;
@@ -1430,7 +1495,7 @@ static void shell_wt(const char *argument) {
         ++length;
     }
     if (argument[length]) {
-        terminal_write("wt: command is too long. Type 'h wt' for usage.\n");
+        terminal_write("watchtower: command is too long. Type 'h wt' for usage.\n");
         return;
     }
     command[length] = '\0';
@@ -1440,6 +1505,8 @@ static void shell_wt(const char *argument) {
     while (length > start && (command[length - 1] == ' ' || command[length - 1] == '\t'))
         command[--length] = '\0';
     const char *sub = command + start;
+    char expanded_sub[64];
+    sub = shell_expand_first_word(sub, expanded_sub, sizeof(expanded_sub), true);
     if (!*sub || strcmp_local(sub, "status") == 0) {
         shell_wt_status();
         return;
@@ -1466,7 +1533,7 @@ static void shell_wt(const char *argument) {
         while (*p == ' ' || *p == '\t')
             ++p;
         if (!valid || *p || limit == 0) {
-            terminal_write("Usage: wt log [count]\n");
+            terminal_write("Usage: wt log [count] or wt lg [count]\n");
             return;
         }
         shell_wt_log(limit);
@@ -1505,272 +1572,273 @@ static void shell_wt(const char *argument) {
         terminal_write("Fatal panic details are handled by the kernel panic reporter.\n");
         return;
     }
-    terminal_write("wt: unknown subcommand. Type 'h wt' for usage.\n");
+    terminal_write("watchtower: unknown subcommand. Type 'h wt' for usage.\n");
 }
-
 static void shell_help(const char *topic) {
+    char expanded_topic[64];
+    topic = shell_expand_first_word(topic, expanded_topic, sizeof(expanded_topic), false);
     if (!topic)
         topic = "";
-
     while (*topic == ' ' || *topic == '\t')
         ++topic;
-
     if (!*topic) {
         terminal_write("ANGOS COMMAND REFERENCE\n");
-        terminal_write("Use: h [command] to list commands or display detailed help.\n");
-        terminal_write("Notation: <required> must be supplied; [optional] may be omitted.\n");
-        terminal_write("          Do not type the angle brackets or square brackets.\n\n");
-        terminal_write("Command   Usage                  Description\n");
-        terminal_write("--------  ---------------------  ------------------------------\n");
-        terminal_write("h         h [command]            Show general or command-specific help\n");
-        terminal_write("cls       cls                    Clear the terminal\n");
-        terminal_write("ver       ver                    Display the OS version\n");
-        terminal_write("disk      disk                   Detect the primary disk\n");
-        terminal_write("diskread  diskread               Read disk sector zero\n");
-        terminal_write("diskinit  diskinit               Initialize disk and filesystem tables\n");
-        terminal_write("fstest    fstest                 Test file reading\n");
-        terminal_write("ls        ls [directory]         List a directory\n");
-        terminal_write("ct        ct <file>              Display a file\n");
-        terminal_write("stat      stat <path>            Show file or directory details\n");
-        terminal_write("nw        nw <filename>          Create an empty file\n");
-        terminal_write("ec        ec [text]              Print text or a blank line\n");
-        terminal_write("ed        ed <file> <action> [text] Edit or remove one line\n");
-        terminal_write("cp        cp <source-file> <destination-name> Copy a file\n");
-        terminal_write("rm        rm <filename>          Delete a file\n");
-        terminal_write("wt        wt [subcommand]        Inspect diagnostics and run checks\n");
-        terminal_write("fat       fat                    Detect the filesystem type\n");
-        terminal_write("fatls     fatls                  Legacy FAT directory listing\n");
-        terminal_write("fatcat    fatcat <file>          Legacy FAT file reader\n");
-        terminal_write("reboot    reboot                 Restart the machine\n");
+        terminal_write("Use h [command] to display detailed command help.\n");
+        terminal_write("Argument notation: <required> must be supplied; [optional] may be omitted.\n");
+        terminal_write("Do not type the angle brackets or square brackets themselves.\n\n");
+        terminal_write("Command and alias          Usage                                      Description\n");
+        terminal_write("-------------------------  -----------------------------------------  -------------------------------\n");
+        terminal_write("help (h)                   help [command]                             Show command help\n");
+        terminal_write("clear (cls)                clear                                      Clear the terminal\n");
+        terminal_write("version (ver)              version                                    Display the OS version\n");
+        terminal_write("disk                       disk                                       Detect the primary disk\n");
+        terminal_write("diskread                   diskread                                   Read disk sector zero\n");
+        terminal_write("diskinit                   diskinit                                   Initialize disk and filesystem tables\n");
+        terminal_write("fstest                     fstest                                     Test reading a known file\n");
+        terminal_write("list (ls)                  list [directory]                           List a directory\n");
+        terminal_write("cat (ct)                   cat <file>                                 Display a file\n");
+        terminal_write("status (stat)              status <path>                              Show file or directory details\n");
+        terminal_write("new (nw)                   new <filename>                             Create an empty file\n");
+        terminal_write("echo (ec)                  echo [text]                                Print text to the terminal\n");
+        terminal_write("edit (ed)                  edit <file> <action> [text]                Edit a file line\n");
+        terminal_write("copy (cp)                  copy <source-file> <destination-name>      Copy a file\n");
+        terminal_write("remove (rm)                remove <filename>                          Delete a file\n");
+        terminal_write("watchtower (wt)            watchtower [subcommand]                   Inspect system diagnostics\n");
+        terminal_write("fat                        fat                                        Detect the filesystem type\n");
+        terminal_write("fatls                      fatls                                      Legacy FAT directory listing\n");
+        terminal_write("fatcat                     fatcat <filename>                         Legacy FAT file reader\n");
+        terminal_write("reboot                     reboot                                     Restart the machine\n");
         return;
     }
-
-    if (strcmp_local(topic, "h") == 0 ||
-        strcmp_local(topic, "help") == 0) {
-        terminal_write("Command : h (short for help)\n");
-        terminal_write("Purpose : Display the command reference or detailed help for one command.\n");
-        terminal_write("Usage   : h [command]\n");
-        terminal_write("Details : With no argument, h displays the command reference.\n");
-        terminal_write("          Supply a command name to view its purpose, usage, options and\n");
-        terminal_write("          examples. The reference explains required and optional arguments.\n");
-        terminal_write("Example : h ed\n");
-
+    if (strcmp_local(topic, "h") == 0) {
+        terminal_write("Command : help\n");
+        terminal_write("Alias   : h\n");
+        terminal_write("Purpose : Show the complete command reference or help for one command.\n");
+        terminal_write("Usage   : help [command]\n");
+        terminal_write("Alias usage: h [command]\n");
+        terminal_write("Details : Omit command to display the full command list. Supply either\n");
+        terminal_write("          the full command name or its listed alias for detailed help.\n");
+        terminal_write("Example : help edit\n");
+        terminal_write("          h ed\n");
     } else if (strcmp_local(topic, "cls") == 0) {
-        terminal_write("Command : cls (clear screen)\n");
-        terminal_write("Purpose : Remove the current terminal output from view.\n");
-        terminal_write("Usage   : cls\n");
-        terminal_write("Details : This clears the display; it does not delete files or reset AngOS.\n");
-        terminal_write("Example : cls\n");
-
+        terminal_write("Command : clear\n");
+        terminal_write("Alias   : cls\n");
+        terminal_write("Purpose : Clear the current terminal display without restarting AngOS.\n");
+        terminal_write("Usage   : clear\n");
+        terminal_write("Alias usage: cls\n");
+        terminal_write("Example : clear\n");
+        terminal_write("          cls\n");
     } else if (strcmp_local(topic, "ver") == 0) {
-        terminal_write("Command : ver (short for version)\n");
-        terminal_write("Purpose : Display the AngOS kernel version string.\n");
-        terminal_write("Usage   : ver\n");
-        terminal_write("Details : Useful for checking which kernel build is running.\n");
-        terminal_write("Example : ver\n");
-
+        terminal_write("Command : version\n");
+        terminal_write("Alias   : ver\n");
+        terminal_write("Purpose : Display the AngOS version and architecture string.\n");
+        terminal_write("Usage   : version\n");
+        terminal_write("Alias usage: ver\n");
+        terminal_write("Example : version\n");
     } else if (strcmp_local(topic, "disk") == 0) {
         terminal_write("Command : disk\n");
-        terminal_write("Purpose : Probe the primary ATA disk.\n");
+        terminal_write("Purpose : Probe the primary ATA disk and display its reported capacity.\n");
         terminal_write("Usage   : disk\n");
-        terminal_write("Details : Reports whether a disk is detected and, when available,\n");
-        terminal_write("          its reported sector count. This is a diagnostic command.\n");
+        terminal_write("Details : This reports whether the primary disk responds to identification.\n");
         terminal_write("Example : disk\n");
-
     } else if (strcmp_local(topic, "diskread") == 0) {
-        terminal_write("Command : diskread (disk read)\n");
-        terminal_write("Purpose : Read and inspect disk sector zero.\n");
+        terminal_write("Command : diskread\n");
+        terminal_write("Purpose : Read disk sector zero and display its signature information.\n");
         terminal_write("Usage   : diskread\n");
-        terminal_write("Details : Reports whether the read succeeded and displays the final\n");
-        terminal_write("          two bytes, which are commonly the boot-sector signature.\n");
+        terminal_write("Details : This is a read-only diagnostic command. It does not change the disk.\n");
         terminal_write("Example : diskread\n");
-
     } else if (strcmp_local(topic, "diskinit") == 0) {
-        terminal_write("Command : diskinit (disk initialize)\n");
-        terminal_write("Purpose : Initialize AngOS disk, partition and filesystem tables.\n");
+        terminal_write("Command : diskinit\n");
+        terminal_write("Purpose : Initialize the disk, partition and filesystem tables.\n");
         terminal_write("Usage   : diskinit\n");
-        terminal_write("Details : Reports the detected filesystem type where available.\n");
-        terminal_write("          Run this when disk or filesystem information is uninitialized.\n");
+        terminal_write("Details : Reports the filesystem type detected for the primary partition.\n");
         terminal_write("Example : diskinit\n");
-
     } else if (strcmp_local(topic, "fstest") == 0) {
-        terminal_write("Command : fstest (filesystem test)\n");
+        terminal_write("Command : fstest\n");
         terminal_write("Purpose : Test opening and reading a known bootloader file.\n");
         terminal_write("Usage   : fstest\n");
-        terminal_write("Details : Prints file-open and read results for diagnosing filesystem\n");
-        terminal_write("          API problems. It is a diagnostic test, not a repair tool.\n");
+        terminal_write("Details : Use this to investigate basic file-open and file-read behaviour.\n");
+        terminal_write("          It is a diagnostic test and does not repair the filesystem.\n");
         terminal_write("Example : fstest\n");
-
     } else if (strcmp_local(topic, "ls") == 0) {
-        terminal_write("Command : ls (short for list)\n");
-        terminal_write("Purpose : List directory entries.\n");
-        terminal_write("Usage   : ls [directory]\n");
-        terminal_write("Details : With no argument, lists the root directory. A path can be\n");
-        terminal_write("          supplied to list a directory relative to volume A.\n");
-        terminal_write("Example : ls EFI/BOOT\n");
-
+        terminal_write("Command : list\n");
+        terminal_write("Alias   : ls\n");
+        terminal_write("Purpose : Display the entries in a directory.\n");
+        terminal_write("Usage   : list [directory]\n");
+        terminal_write("Alias usage: ls [directory]\n");
+        terminal_write("Details : If directory is omitted, the root directory on volume A is listed.\n");
+        terminal_write("Example : list\n");
+        terminal_write("          ls EFI/BOOT\n");
     } else if (strcmp_local(topic, "ct") == 0) {
-        terminal_write("Command : ct (compact file-display command)\n");
-        terminal_write("Purpose : Display readable text from a file without editing it.\n");
-        terminal_write("Usage   : ct <file>\n");
-        terminal_write("Details : This compact command is inspired by cat, short for\n");
-        terminal_write("          concatenate. AngOS currently displays one file per command.\n");
-        terminal_write("Example : ct notes.txt\n");
-
+        terminal_write("Command : cat\n");
+        terminal_write("Alias   : ct\n");
+        terminal_write("Purpose : Display readable text from one file without editing it.\n");
+        terminal_write("Usage   : cat <file>\n");
+        terminal_write("Alias usage: ct <file>\n");
+        terminal_write("Details : The file argument is required. Output is sent to the terminal.\n");
+        terminal_write("Example : cat notes.txt\n");
+        terminal_write("          ct notes.txt\n");
     } else if (strcmp_local(topic, "stat") == 0) {
-        terminal_write("Command : stat (short for status)\n");
-        terminal_write("Purpose : Report whether a path is a file or directory.\n");
-        terminal_write("Usage   : stat <path>\n");
-        terminal_write("Details : For files, displays the file size in bytes. It does not\n");
-        terminal_write("          modify the file or its contents.\n");
-        terminal_write("Example : stat notes.txt\n");
-
+        terminal_write("Command : status\n");
+        terminal_write("Alias   : stat\n");
+        terminal_write("Purpose : Report whether a path is a file or directory, and show file size.\n");
+        terminal_write("Usage   : status <path>\n");
+        terminal_write("Alias usage: stat <path>\n");
+        terminal_write("Details : The path is required. This command does not modify the target.\n");
+        terminal_write("Example : status notes.txt\n");
+        terminal_write("          stat notes.txt\n");
     } else if (strcmp_local(topic, "nw") == 0) {
-        terminal_write("Command : nw (short for new)\n");
-        terminal_write("Purpose : Create a new, empty file.\n");
-        terminal_write("Usage   : nw <filename>\n");
-        terminal_write("Details : Creates a file in the FAT16 root directory. The current\n");
-        terminal_write("          implementation uses FAT 8.3 filenames. It will not overwrite\n");
-        terminal_write("          an existing entry with the same filename.\n");
-        terminal_write("Example : nw notes.txt\n");
-
+        terminal_write("Command : new\n");
+        terminal_write("Alias   : nw\n");
+        terminal_write("Purpose : Create a new empty file.\n");
+        terminal_write("Usage   : new <filename>\n");
+        terminal_write("Alias usage: nw <filename>\n");
+        terminal_write("Details : The filename is required. The current implementation supports\n");
+        terminal_write("          FAT 8.3 filenames in the FAT16 root directory and does not overwrite\n");
+        terminal_write("          an existing file with the same name.\n");
+        terminal_write("Example : new notes.txt\n");
+        terminal_write("          nw notes.txt\n");
     } else if (strcmp_local(topic, "ec") == 0) {
-        terminal_write("Command : ec (short for echo)\n");
-        terminal_write("Purpose : Print the provided text to the terminal.\n");
-        terminal_write("Usage   : ec [text]\n");
-        terminal_write("Details : With text, ec prints it to the screen. With no text,\n");
-        terminal_write("          it prints a blank line. It never creates or saves a file.\n");
-        terminal_write("Example : ec Hello from AngOS\n");
-
+        terminal_write("Command : echo\n");
+        terminal_write("Alias   : ec\n");
+        terminal_write("Purpose : Print text to the terminal.\n");
+        terminal_write("Usage   : echo [text]\n");
+        terminal_write("Alias usage: ec [text]\n");
+        terminal_write("Details : Text is optional. With no text, the command prints a blank line.\n");
+        terminal_write("          The text is displayed only; it is not saved to a file.\n");
+        terminal_write("Example : echo Hello from AngOS\n");
+        terminal_write("          ec Hello from AngOS\n");
     } else if (strcmp_local(topic, "ed") == 0) {
-        terminal_write("Command : ed (short for edit)\n");
-        terminal_write("Purpose : Insert, replace or delete one line in an existing file.\n");
-        terminal_write("Usage   : ed <file> <action> [text]\n");
-        terminal_write("Details : The file and action are required. Text is needed for + and =\n");
-        terminal_write("          actions, but must be omitted for - actions. Line numbers start\n");
-        terminal_write("          at 1. Use ordinary text or put it in double quotes.\n\n");
-        terminal_write("  ed <file> +<line> <text> Insert text before line <line>\n");
-        terminal_write("  ed <file> + text     Append a line at the end\n");
-        terminal_write("  ed <file> +0 text    Insert at the beginning\n");
-        terminal_write("  ed <file> =<line> <text> Replace line <line>\n");
-        terminal_write("  ed <file> -<line>       Delete line <line>\n\n");
-        terminal_write("Details : +<line> inserts before that line. If the line is beyond the\n");
-        terminal_write("          end of the file, text is appended. +0 inserts at the start.\n");
-        terminal_write("          =<line> replaces an existing line; -<line> deletes that line.\n");
-        terminal_write("          Type digits for the line number, not the word line or brackets.\n");
-        terminal_write("          Deletion takes no text. Ranges and multi-line editing are not\n");
-        terminal_write("          supported.\n\n");
-        terminal_write("Examples: ed notes.txt + First line\n");
-        terminal_write("          ed notes.txt +2 A new second line\n");
-        terminal_write("          ed notes.txt =1 Updated first line\n");
-        terminal_write("          ed notes.txt -1\n");
-        terminal_write("          ed notes.txt +1 \"Text with spaces\"\n");
-        terminal_write("          ed notes.txt +1 \"\"\n");
-        terminal_write("Details : Create the file with nw first. The editor has a 16 KiB\n");
-        terminal_write("          file-size limit in the current implementation.\n");
-
+        terminal_write("Command : edit\n");
+        terminal_write("Alias   : ed\n");
+        terminal_write("Purpose : Insert, replace or delete one line in an existing text file.\n");
+        terminal_write("Usage   : edit <file> <action> [text]\n");
+        terminal_write("Alias usage: ed <file> <action> [text]\n");
+        terminal_write("Details : The file and action are required. Text is required for insert\n");
+        terminal_write("          and replace actions, and must be omitted for delete actions.\n");
+        terminal_write("          Line numbers start at 1. Do not type the placeholder brackets.\n\n");
+        terminal_write("Actions:\n");
+        terminal_write("  edit <file> +<line> <text>  Insert before the specified line\n");
+        terminal_write("  edit <file> + <text>        Append a line at the end\n");
+        terminal_write("  edit <file> +0 <text>       Insert at the beginning\n");
+        terminal_write("  edit <file> =<line> <text>  Replace an existing line\n");
+        terminal_write("  edit <file> -<line>         Delete an existing line\n\n");
+        terminal_write("Details : The line placeholder is replaced with digits, such as 1 or 2.\n");
+        terminal_write("          Plain text can contain spaces. Double quotes are optional unless\n");
+        terminal_write("          needed to represent an empty line. The file must exist first.\n");
+        terminal_write("          The editor has a 16 KiB file-size limit and does not support ranges.\n\n");
+        terminal_write("Examples:\n");
+        terminal_write("  edit notes.txt + First line\n");
+        terminal_write("  ed notes.txt +2 A new second line\n");
+        terminal_write("  edit notes.txt =1 Updated first line\n");
+        terminal_write("  edit notes.txt -1\n");
+        terminal_write("  ed notes.txt +1 \"Text with spaces\"\n");
     } else if (strcmp_local(topic, "cp") == 0) {
-        terminal_write("Command : cp (short for copy)\n");
-        terminal_write("Purpose : Copy a file to a different root-directory filename.\n");
-        terminal_write("Usage   : cp <source-file> <destination-name>\n");
-        terminal_write("Details : The source may be in a subdirectory. The destination must\n");
-        terminal_write("          be a FAT 8.3 filename in the root directory. Recursive\n");
-        terminal_write("          directory copying is not supported.\n");
-        terminal_write("Example : cp notes.txt backup.txt\n");
-
+        terminal_write("Command : copy\n");
+        terminal_write("Alias   : cp\n");
+        terminal_write("Purpose : Copy the contents of one file to a new root-directory file.\n");
+        terminal_write("Usage   : copy <source-file> <destination-name>\n");
+        terminal_write("Alias usage: cp <source-file> <destination-name>\n");
+        terminal_write("Details : Both arguments are required. The source can be in a subdirectory;\n");
+        terminal_write("          the destination is a FAT 8.3 filename in the root directory.\n");
+        terminal_write("          Directory copying is not supported.\n");
+        terminal_write("Example : copy notes.txt backup.txt\n");
+        terminal_write("          cp notes.txt backup.txt\n");
     } else if (strcmp_local(topic, "rm") == 0) {
-        terminal_write("Command : rm (short for remove)\n");
+        terminal_write("Command : remove\n");
+        terminal_write("Alias   : rm\n");
         terminal_write("Purpose : Delete a file entry and release its FAT16 cluster chain.\n");
-        terminal_write("Usage   : rm <filename>\n");
-        terminal_write("Details : Currently supports FAT16 root-directory files with FAT 8.3\n");
-        terminal_write("          filenames. Directories and paths are not supported.\n");
-        terminal_write("          Deletion is permanent; there is no recycle bin or undo.\n");
-        terminal_write("          If disk I/O fails, inspect the filesystem before continuing.\n");
-        terminal_write("Example : rm notes.txt\n");
-    } else if (strcmp_local(topic, "wt") == 0 || strcmp_local(topic, "watchtower") == 0) {
-        terminal_write("Command : wt (AngOS Watchtower)\n");
-        terminal_write("Alias   : watchtower\n");
-        terminal_write("Purpose : Inspect system diagnostics, recent events, memory handling\n");
-        terminal_write("          and read-only disk and filesystem checks.\n");
-        terminal_write("Usage   : wt [subcommand]\n");
-        terminal_write("Details : With no subcommand, wt displays status. The in-memory event\n");
-        terminal_write("          history stores up to 32 events and is cleared on reboot.\n");
-        terminal_write("          The history is for events recorded while the kernel is running.\n\n");
-        terminal_write("Argument notation: <required> must be supplied; [optional] may be\n");
-        terminal_write("          omitted. Do not type the brackets themselves.\n\n");
+        terminal_write("Usage   : remove <filename>\n");
+        terminal_write("Alias usage: rm <filename>\n");
+        terminal_write("Details : The filename is required. Current support is limited to FAT16\n");
+        terminal_write("          root-directory files with FAT 8.3 names. Directories are not supported.\n");
+        terminal_write("          Deletion is permanent. If disk I/O fails, inspect the filesystem.\n");
+        terminal_write("Example : remove notes.txt\n");
+        terminal_write("          rm notes.txt\n");
+    } else if (strcmp_local(topic, "wt") == 0) {
+        terminal_write("Command : watchtower\n");
+        terminal_write("Alias   : wt\n");
+        terminal_write("Purpose : Inspect AngOS diagnostics, review recent events, and run memory\n");
+        terminal_write("          and read-only disk and filesystem checks from the shell.\n");
+        terminal_write("Usage   : watchtower [subcommand]\n");
+        terminal_write("Alias usage: wt [subcommand]\n");
+        terminal_write("Details : With no subcommand, Watchtower displays status. Its in-memory\n");
+        terminal_write("          history stores up to 32 events and does not persist across reboot.\n");
+        terminal_write("          Panic reports are emitted by the kernel panic reporter.\n\n");
+        terminal_write("Argument notation: <required> must be supplied; [optional] may be omitted.\n");
+        terminal_write("          Do not type the brackets themselves.\n\n");
         terminal_write("Subcommands:\n");
         terminal_write("  wt status\n");
-        terminal_write("      Show whether diagnostics initialized and how many events are\n");
-        terminal_write("      buffered. This command does not change system state.\n\n");
+        terminal_write("      Show whether diagnostics initialized and how many events are buffered.\n");
+        terminal_write("      This command does not clear or add events.\n\n");
         terminal_write("  wt log [count]\n");
-        terminal_write("      Display recent events from oldest to newest. Count is optional;\n");
-        terminal_write("      it defaults to 10 and is capped at the 32 events held in memory.\n");
-        terminal_write("      Count must be a positive decimal number.\n\n");
+        terminal_write("  wt lg [count] (alias for wt log [count])\n");
+        terminal_write("      Display the newest count events available, in chronological order.\n");
+        terminal_write("      Count is optional and defaults to 10. It must be a positive number.\n");
+        terminal_write("      At most the 32 events stored in memory can be displayed.\n\n");
         terminal_write("  wt clear\n");
-        terminal_write("      Clear only the in-memory event history. This does not change\n");
-        terminal_write("      disk contents or alter any separately captured diagnostic output.\n\n");
+        terminal_write("  wt cls (alias for wt clear)\n");
+        terminal_write("      Clear the in-memory event history. This does not delete files or\n");
+        terminal_write("      change any diagnostic output already saved outside AngOS.\n\n");
         terminal_write("  wt selftest\n");
         terminal_write("      Record a test event and verify that Watchtower can retrieve it.\n");
-        terminal_write("      The test event remains in the history until it is overwritten or cleared.\n\n");
+        terminal_write("      The test itself adds an event to the history.\n\n");
         terminal_write("  wt memtest\n");
-        terminal_write("      Repeat heap allocations, memory writes, data verification, virtual\n");
-        terminal_write("      mapping checks, and physical page allocation and release. This test\n");
-        terminal_write("      changes temporary memory contents but does not intentionally write files.\n\n");
+        terminal_write("      Exercise repeated heap allocations, memory writes, data verification,\n");
+        terminal_write("      virtual mappings and physical-page release. It does not write files.\n\n");
         terminal_write("  wt fscheck\n");
-        terminal_write("      Run read-only disk probing, sector-zero reading, FAT detection and\n");
-        terminal_write("      root-directory traversal. It does not create, edit or delete files.\n\n");
+        terminal_write("      Run read-only disk probing, sector reading, FAT detection and root\n");
+        terminal_write("      directory traversal. It does not create, edit or delete files.\n\n");
         terminal_write("  wt report\n");
-        terminal_write("      Display the current status, up to 10 recent events and a note about\n");
-        terminal_write("      how fatal panic details are handled. It does not save a report to disk.\n\n");
+        terminal_write("  wt rp (alias for wt report)\n");
+        terminal_write("      Display status and up to 10 newest diagnostic events. It prints to\n");
+        terminal_write("      the terminal and does not save a report to a file.\n\n");
         terminal_write("Examples:\n");
-        terminal_write("  wt\n");
         terminal_write("  wt status\n");
-        terminal_write("  wt log 20\n");
+        terminal_write("  wt log 10\n");
+        terminal_write("  wt lg 10\n");
+        terminal_write("  wt clear\n");
+        terminal_write("  wt cls\n");
         terminal_write("  wt selftest\n");
         terminal_write("  wt memtest\n");
         terminal_write("  wt fscheck\n");
         terminal_write("  wt report\n");
-        terminal_write("  wt clear\n");
-
+        terminal_write("  wt rp\n");
     } else if (strcmp_local(topic, "fat") == 0) {
         terminal_write("Command : fat\n");
-        terminal_write("Purpose : Identify the supported FAT filesystem type.\n");
+        terminal_write("Purpose : Detect the FAT filesystem type on the primary disk.\n");
         terminal_write("Usage   : fat\n");
-        terminal_write("Details : Reports the filesystem type detected by AngOS. This is a\n");
-        terminal_write("          detection command and does not format the volume.\n");
+        terminal_write("Details : This reports the detected type; it does not format the volume.\n");
         terminal_write("Example : fat\n");
-
     } else if (strcmp_local(topic, "fatls") == 0) {
-        terminal_write("Command : fatls (legacy FAT listing)\n");
-        terminal_write("Purpose : Run the older FAT16 root-directory listing routine.\n");
+        terminal_write("Command : fatls\n");
+        terminal_write("Purpose : Run the legacy FAT16 root-directory listing routine.\n");
         terminal_write("Usage   : fatls\n");
-        terminal_write("Details : Kept for compatibility and filesystem diagnostics. Use ls\n");
-        terminal_write("          for normal directory listings.\n");
+        terminal_write("Details : Retained for compatibility and low-level filesystem diagnostics.\n");
+        terminal_write("          Use list or ls for ordinary directory listings.\n");
         terminal_write("Example : fatls\n");
-
     } else if (strcmp_local(topic, "fatcat") == 0) {
-        terminal_write("Command : fatcat (legacy FAT file reader)\n");
-        terminal_write("Purpose : Read a file using the older FAT16 reader.\n");
+        terminal_write("Command : fatcat\n");
+        terminal_write("Purpose : Read a file using the legacy FAT16 reader.\n");
         terminal_write("Usage   : fatcat <filename>\n");
-        terminal_write("Details : Retained for diagnostics and compatibility. Use ct for\n");
-        terminal_write("          normal file display.\n");
+        terminal_write("Details : Retained for compatibility and diagnostics. Use cat or ct for\n");
+        terminal_write("          ordinary file display.\n");
         terminal_write("Example : fatcat notes.txt\n");
-
     } else if (strcmp_local(topic, "reboot") == 0) {
         terminal_write("Command : reboot\n");
         terminal_write("Purpose : Request a machine restart.\n");
         terminal_write("Usage   : reboot\n");
-        terminal_write("Details : This sends a reset request through the keyboard controller.\n");
-        terminal_write("          Save important work first; unsaved volatile state is lost.\n");
+        terminal_write("Details : Save important work first; unsaved volatile state is lost.\n");
         terminal_write("Example : reboot\n");
-
     } else {
-        terminal_write("ERROR   : No detailed help is available for that command.\n");
-        terminal_write("Usage   : h <command>\n");
+        terminal_write("No detailed help is available for that command.\n");
+        terminal_write("Usage: help [command] or h [command]\n");
     }
 }
-
 void execute_command(const char *cmd) {
+    char expanded_command[128];
+    cmd = shell_expand_first_word(cmd, expanded_command, sizeof(expanded_command), false);
+
     if (strcmp_local(cmd, "h") == 0 ||
         strcmp_local(cmd, "help") == 0) {
         shell_help("");

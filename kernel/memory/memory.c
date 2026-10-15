@@ -1,4 +1,5 @@
 #include <types.h>
+#include <stdlib.h>
   
 #include <diagnostics.h>
 #include <memory.h>
