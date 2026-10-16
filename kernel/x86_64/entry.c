@@ -119,7 +119,7 @@ static void shell_ls(
 
     if (!dir) {
         terminal_write(
-            "ls: unable to open directory\n"
+            "list: unable to open directory\n"
         );
         return;
     }
@@ -135,6 +135,11 @@ static void shell_ls(
         terminal_write("\n");
     }
 
+    if (dir->reserved) {
+        terminal_write("list: directory scan failed because disk reading failed.\n");
+        closedir(dir);
+        return;
+    }
     closedir(dir);
 }
 
@@ -143,7 +148,7 @@ static void shell_stat(
 ) {
     if (!argument || argument[0] == '\0') {
         terminal_write(
-            "stat: missing path\n"
+            "status: missing path\n"
         );
         return;
     }
@@ -206,7 +211,7 @@ static void shell_stat(
     }
 
     terminal_write(
-        "stat: path not found\n"
+        "status: path not found\n"
     );
 }
 
@@ -265,7 +270,7 @@ static void shell_nw(
 ) {
     if (!argument || !argument[0]) {
         terminal_write(
-            "nw: missing filename\n"
+            "new: missing filename\n"
         );
         return;
     }
@@ -275,7 +280,7 @@ static void shell_nw(
         disktable[0].parts[0].fs != fat16) {
 
         terminal_write(
-            "nw: FAT16 filesystem unavailable\n"
+            "new: FAT16 filesystem unavailable\n"
         );
         return;
     }
@@ -288,7 +293,7 @@ static void shell_nw(
         )) {
 
         terminal_write(
-            "nw: invalid 8.3 filename\n"
+            "new: invalid 8.3 filename\n"
         );
         return;
     }
@@ -304,7 +309,7 @@ static void shell_nw(
         )) {
 
         terminal_write(
-            "nw: unable to read MBR\n"
+            "new: unable to read MBR\n"
         );
         return;
     }
@@ -322,7 +327,7 @@ static void shell_nw(
         )) {
 
         terminal_write(
-            "nw: unable to read FAT boot sector\n"
+            "new: unable to read FAT boot sector\n"
         );
         return;
     }
@@ -357,7 +362,7 @@ static void shell_nw(
         sectors_per_fat == 0) {
 
         terminal_write(
-            "nw: invalid FAT16 filesystem\n"
+            "new: invalid FAT16 filesystem\n"
         );
         return;
     }
@@ -384,7 +389,7 @@ static void shell_nw(
             )) {
 
             terminal_write(
-                "nw: unable to read root directory\n"
+                "new: unable to read root directory\n"
             );
             return;
         }
@@ -414,7 +419,7 @@ static void shell_nw(
                 sector[off + 11] =
                     ARCHIVE;
                 if (!writesectorpio(root_lba + s, 1, sector, 0)) {
-                    terminal_write("nw: disk write failed or timed out\n");
+                    terminal_write("new: disk write failed or timed out\n");
                     return;
                 }
 
@@ -427,7 +432,7 @@ static void shell_nw(
                     )) {
 
                     terminal_write(
-                        "nw: write verification failed\n"
+                        "new: write verification failed\n"
                     );
                     return;
                 }
@@ -445,7 +450,7 @@ static void shell_nw(
 
                 if (!verified) {
                     terminal_write(
-                        "nw: write verification failed\n"
+                        "new: write verification failed\n"
                     );
                     return;
                 }
@@ -484,7 +489,7 @@ static void shell_nw(
 
             if (same) {
                 terminal_write(
-                    "nw: file already exists\n"
+                    "new: file already exists\n"
                 );
                 return;
             }
@@ -492,7 +497,7 @@ static void shell_nw(
     }
 
     terminal_write(
-        "nw: root directory is full\n"
+        "new: root directory is full\n"
     );
 }
 
@@ -508,7 +513,7 @@ static void shell_ec(const char *argument) {
 
 static void shell_rm(const char *argument) {
     if (!argument) {
-        terminal_write("Usage: rm <filename>\n");
+        terminal_write("Usage: remove <filename>\n");
         return;
     }
 
@@ -523,7 +528,7 @@ static void shell_rm(const char *argument) {
            *argument != '\t') {
 
         if (length >= sizeof(filename) - 1) {
-            terminal_write("rm: filename is too long\n");
+            terminal_write("remove: filename is too long\n");
             return;
         }
 
@@ -531,7 +536,7 @@ static void shell_rm(const char *argument) {
     }
 
     if (length == 0) {
-        terminal_write("Usage: rm <filename>\n");
+        terminal_write("Usage: remove <filename>\n");
         return;
     }
 
@@ -541,7 +546,7 @@ static void shell_rm(const char *argument) {
         ++argument;
 
     if (*argument) {
-        terminal_write("Usage: rm <filename>\n");
+        terminal_write("Usage: remove <filename>\n");
         return;
     }
 
@@ -549,7 +554,7 @@ static void shell_rm(const char *argument) {
 
     if (!shell_make_fat83(filename, fat_name)) {
         terminal_write(
-            "rm: invalid filename; use a FAT 8.3 filename\n"
+            "remove: invalid filename; use a FAT 8.3 filename\n"
         );
         return;
     }
@@ -557,25 +562,25 @@ static void shell_rm(const char *argument) {
     int result = fat16_delete_file(fat_name);
 
     if (result == FAT16_WRITE_OK) {
-        terminal_write("rm: removed ");
+        terminal_write("remove: removed ");
         terminal_write(filename);
         terminal_write("\n");
     } else if (result == FAT16_WRITE_NOT_FOUND) {
-        terminal_write("rm: file not found or entry changed\n");
+        terminal_write("remove: file not found or entry changed\n");
     } else if (result == FAT16_WRITE_NOT_FILE) {
-        terminal_write("rm: directories cannot be removed with this command\n");
+        terminal_write("remove: directories cannot be removed with this command\n");
     } else if (result == FAT16_WRITE_BAD_FS) {
-        terminal_write("rm: a valid FAT16 filesystem is required\n");
+        terminal_write("remove: a valid FAT16 filesystem is required\n");
     } else if (result == FAT16_WRITE_NO_MEMORY) {
-        terminal_write("rm: not enough memory to validate the file\n");
+        terminal_write("remove: not enough memory to validate the file\n");
     } else if (result == FAT16_WRITE_IO_ERROR) {
-        terminal_write("rm: disk I/O or verification failed\n");
-        terminal_write("rm: check the filesystem before continuing\n");
+        terminal_write("remove: disk I/O or verification failed\n");
+        terminal_write("remove: check the filesystem before continuing\n");
     } else if (result == FAT16_WRITE_DELETE_CLEANUP_ERROR) {
-        terminal_write("rm: file entry removed, but cluster cleanup failed\n");
-        terminal_write("rm: check the filesystem; some space may remain allocated\n");
+        terminal_write("remove: file entry removed, but cluster cleanup failed\n");
+        terminal_write("remove: check the filesystem; some space may remain allocated\n");
     } else {
-        terminal_write("rm: deletion failed\n");
+        terminal_write("remove: deletion failed\n");
     }
 }
 
@@ -594,7 +599,7 @@ static void shell_cp(const char *argument) {
            argument[source_length] != ' ' &&
            argument[source_length] != '\t') {
         if (source_length >= sizeof(source_name) - 1) {
-            terminal_write("cp: source path is too long\n");
+            terminal_write("copy: source path is too long\n");
             return;
         }
         source_name[source_length] = argument[source_length];
@@ -602,7 +607,7 @@ static void shell_cp(const char *argument) {
     }
 
     if (source_length == 0) {
-        terminal_write("Usage: cp <source-file> <destination-name>\n");
+        terminal_write("Usage: copy <source-file> <destination-name>\n");
         return;
     }
     source_name[source_length] = '\0';
@@ -616,7 +621,7 @@ static void shell_cp(const char *argument) {
            argument[destination_length] != ' ' &&
            argument[destination_length] != '\t') {
         if (destination_length >= sizeof(destination_name) - 1) {
-            terminal_write("cp: destination must be an 8.3 filename in the root directory\n");
+            terminal_write("copy: destination must be an 8.3 filename in the root directory\n");
             return;
         }
         destination_name[destination_length] = argument[destination_length];
@@ -624,7 +629,7 @@ static void shell_cp(const char *argument) {
     }
 
     if (destination_length == 0) {
-        terminal_write("Usage: cp <source-file> <destination-name>\n");
+        terminal_write("Usage: copy <source-file> <destination-name>\n");
         return;
     }
     destination_name[destination_length] = '\0';
@@ -634,13 +639,13 @@ static void shell_cp(const char *argument) {
         ++argument;
 
     if (*argument) {
-        terminal_write("Usage: cp <source-file> <destination-name>\n");
+        terminal_write("Usage: copy <source-file> <destination-name>\n");
         return;
     }
 
     if (!shell_make_fat83(destination_name, fat_name) ||
         strchr_local(destination_name, '/') != 0) {
-        terminal_write("cp: destination must be an 8.3 filename in the root directory\n");
+        terminal_write("copy: destination must be an 8.3 filename in the root directory\n");
         return;
     }
 
@@ -657,20 +662,20 @@ static void shell_cp(const char *argument) {
     DIR *source_dir = opendir(source_path);
     if (source_dir) {
         closedir(source_dir);
-        terminal_write("cp: recursive directory copying is not supported yet\n");
-        terminal_write("cp: directory creation and nested-file writing must be implemented first\n");
+        terminal_write("copy: recursive directory copying is not supported yet\n");
+        terminal_write("copy: directory creation and nested-file writing must be implemented first\n");
         return;
     }
 
     FILE *source_fp = fopen(source_path, 0);
     if (!source_fp) {
-        terminal_write("cp: source file not found\n");
+        terminal_write("copy: source file not found\n");
         return;
     }
 
     if (source_fp->size > 0xFFFFFFFFULL) {
         fclose(source_fp);
-        terminal_write("cp: source file is too large\n");
+        terminal_write("copy: source file is too large\n");
         return;
     }
 
@@ -679,7 +684,7 @@ static void shell_cp(const char *argument) {
 
     if (!buffer) {
         fclose(source_fp);
-        terminal_write("cp: not enough memory\n");
+        terminal_write("copy: not enough memory\n");
         return;
     }
 
@@ -701,7 +706,7 @@ static void shell_cp(const char *argument) {
 
     if (loaded != length) {
         free(buffer);
-        terminal_write("cp: could not read the entire source file\n");
+        terminal_write("copy: could not read the entire source file\n");
         return;
     }
 
@@ -709,7 +714,7 @@ static void shell_cp(const char *argument) {
     if (destination_dir) {
         closedir(destination_dir);
         free(buffer);
-        terminal_write("cp: destination is a directory, not a filename\n");
+        terminal_write("copy: destination is a directory, not a filename\n");
         return;
     }
 
@@ -723,7 +728,7 @@ static void shell_cp(const char *argument) {
 
         if (!destination_fp) {
             free(buffer);
-            terminal_write("cp: could not create destination file\n");
+            terminal_write("copy: could not create destination file\n");
             return;
         }
 
@@ -734,19 +739,19 @@ static void shell_cp(const char *argument) {
     free(buffer);
 
     if (result == FAT16_WRITE_OK) {
-        terminal_write("cp: copied ");
+        terminal_write("copy: copied ");
         terminal_write(source_name);
         terminal_write(" to ");
         terminal_write(destination_name);
         terminal_write("\n");
     } else if (result == FAT16_WRITE_NO_SPACE) {
-        terminal_write("cp: not enough disk space\n");
+        terminal_write("copy: not enough disk space\n");
     } else if (result == FAT16_WRITE_NO_MEMORY) {
-        terminal_write("cp: not enough memory for disk operation\n");
+        terminal_write("copy: not enough memory for disk operation\n");
     } else if (result == FAT16_WRITE_TOO_LARGE) {
-        terminal_write("cp: file is too large for the destination operation\n");
+        terminal_write("copy: file is too large for the destination operation\n");
     } else {
-        terminal_write("cp: copy failed; the destination may be unchanged\n");
+        terminal_write("copy: copy failed; the destination may be unchanged\n");
     }
 }
 
@@ -762,7 +767,7 @@ static ed_line_t ed_lines[ED_MAX_LINES + 1];
 
 static void shell_ed(const char *argument) {
     if (!argument) {
-        terminal_write("ed: missing arguments\n");
+        terminal_write("edit: missing arguments\n");
         return;
     }
 
@@ -777,7 +782,7 @@ static void shell_ed(const char *argument) {
            *argument != '\t') {
 
         if (filename_length >= sizeof(filename) - 1) {
-            terminal_write("ed: invalid filename\n");
+            terminal_write("edit: invalid filename\n");
             return;
         }
 
@@ -786,7 +791,7 @@ static void shell_ed(const char *argument) {
 
     if (filename_length == 0) {
         terminal_write(
-            "Usage: ed <file> +N text | + text | +0 text | =N text | -N\n"
+            "Usage: edit <file> +N text | + text | +0 text | =N text | -N\n"
         );
         return;
     }
@@ -796,7 +801,7 @@ static void shell_ed(const char *argument) {
     char fat_name[11];
 
     if (!shell_make_fat83(filename, fat_name)) {
-        terminal_write("ed: invalid 8.3 filename\n");
+        terminal_write("edit: invalid 8.3 filename\n");
         return;
     }
 
@@ -804,7 +809,7 @@ static void shell_ed(const char *argument) {
         ++argument;
 
     if (!*argument) {
-        terminal_write("ed: missing action\n");
+        terminal_write("edit: missing action\n");
         return;
     }
 
@@ -819,7 +824,7 @@ static void shell_ed(const char *argument) {
     char action = token_start[0];
 
     if (action != '+' && action != '=' && action != '-') {
-        terminal_write("ed: action must be +, = or -\n");
+        terminal_write("edit: action must be +, = or -\n");
         return;
     }
 
@@ -848,14 +853,14 @@ static void shell_ed(const char *argument) {
          p < number_end;
          ++p) {
         if (*p < '0' || *p > '9') {
-            terminal_write("ed: invalid line number\n");
+            terminal_write("edit: invalid line number\n");
             return;
         }
 
         u32 digit = (u32)(*p - '0');
 
         if (line_number > (0xFFFFFFFFU - digit) / 10U) {
-            terminal_write("ed: line number is too large\n");
+            terminal_write("edit: line number is too large\n");
             return;
         }
 
@@ -864,7 +869,7 @@ static void shell_ed(const char *argument) {
     }
 
     if (action != '+' && !has_line_number) {
-        terminal_write("ed: this action requires a line number\n");
+        terminal_write("edit: this action requires a line number\n");
         return;
     }
 
@@ -880,7 +885,7 @@ static void shell_ed(const char *argument) {
     if (action == '-') {
         if (*argument) {
             terminal_write(
-                "ed: delete takes no text; example: ed notes.txt -1\n"
+                "edit: delete takes no text; example: ed notes.txt -1\n"
             );
             return;
         }
@@ -894,7 +899,7 @@ static void shell_ed(const char *argument) {
 
             if (*argument != '"') {
                 terminal_write(
-                    "ed: missing closing quote; use \"text\" or plain text\n"
+                    "edit: missing closing quote; use \"text\" or plain text\n"
                 );
                 return;
             }
@@ -907,7 +912,7 @@ static void shell_ed(const char *argument) {
 
             if (*argument) {
                 terminal_write(
-                    "ed: unexpected text after closing quote\n"
+                    "edit: unexpected text after closing quote\n"
                 );
                 return;
             }
@@ -931,7 +936,7 @@ static void shell_ed(const char *argument) {
 
             if (payload_length == 0) {
                 terminal_write(
-                    "ed: missing text; use \"\" for an empty line\n"
+                    "edit: missing text; use \"\" for an empty line\n"
                 );
                 return;
             }
@@ -953,14 +958,14 @@ static void shell_ed(const char *argument) {
 
     if (!fp) {
         terminal_write(
-            "ed: file not found; create it with nw first\n"
+            "edit: file not found; create it with nw first\n"
         );
         return;
     }
 
     if (fp->size > ED_MAX_FILE_SIZE) {
         fclose(fp);
-        terminal_write("ed: file exceeds the 16 KiB editor limit\n");
+        terminal_write("edit: file exceeds the 16 KiB editor limit\n");
         return;
     }
 
@@ -972,7 +977,7 @@ static void shell_ed(const char *argument) {
     bool saved = false;
 
     if (!old_data || !new_data) {
-        message = "ed: not enough memory\n";
+        message = "edit: not enough memory\n";
         goto cleanup;
     }
 
@@ -995,7 +1000,7 @@ static void shell_ed(const char *argument) {
     fp = 0;
 
     if (loaded != old_size) {
-        message = "ed: unable to read the whole file\n";
+        message = "edit: unable to read the whole file\n";
         goto cleanup;
     }
 
@@ -1012,7 +1017,7 @@ static void shell_ed(const char *argument) {
             continue;
 
         if (line_count >= ED_MAX_LINES) {
-            message = "ed: file contains too many lines\n";
+            message = "edit: file contains too many lines\n";
             goto cleanup;
         }
 
@@ -1027,7 +1032,7 @@ static void shell_ed(const char *argument) {
 
     if (start < old_size) {
         if (line_count >= ED_MAX_LINES) {
-            message = "ed: file contains too many lines\n";
+            message = "edit: file contains too many lines\n";
             goto cleanup;
         }
 
@@ -1041,7 +1046,7 @@ static void shell_ed(const char *argument) {
 
     if (action == '+') {
         if (line_count >= ED_MAX_LINES) {
-            message = "ed: maximum line count reached\n";
+            message = "edit: maximum line count reached\n";
             goto cleanup;
         }
 
@@ -1076,7 +1081,7 @@ static void shell_ed(const char *argument) {
         } else {
             if (line_number == 0 || line_number > line_count) {
                 message =
-                    "ed: line does not exist; use + to append\n";
+                    "edit: line does not exist; use + to append\n";
                 goto cleanup;
             }
 
@@ -1088,7 +1093,7 @@ static void shell_ed(const char *argument) {
     else {
         if (line_number == 0 || line_number > line_count) {
             message =
-                "ed: line does not exist; file unchanged\n";
+                "edit: line does not exist; file unchanged\n";
             goto cleanup;
         }
 
@@ -1113,7 +1118,7 @@ static void shell_ed(const char *argument) {
     for (u32 i = 0; i < line_count; ++i) {
         if (i != 0) {
             if (new_size >= ED_MAX_FILE_SIZE) {
-                message = "ed: edited file exceeds 16 KiB\n";
+                message = "edit: edited file exceeds 16 KiB\n";
                 goto cleanup;
             }
 
@@ -1123,7 +1128,7 @@ static void shell_ed(const char *argument) {
         if (ed_lines[i].length >
             ED_MAX_FILE_SIZE - new_size) {
 
-            message = "ed: edited file exceeds 16 KiB\n";
+            message = "edit: edited file exceeds 16 KiB\n";
             goto cleanup;
         }
 
@@ -1132,7 +1137,7 @@ static void shell_ed(const char *argument) {
 
     if (output_final_newline) {
         if (new_size >= ED_MAX_FILE_SIZE) {
-            message = "ed: edited file exceeds 16 KiB\n";
+            message = "edit: edited file exceeds 16 KiB\n";
             goto cleanup;
         }
 
@@ -1169,23 +1174,23 @@ static void shell_ed(const char *argument) {
         if (result == FAT16_WRITE_OK) {
             saved = true;
         } else if (result == FAT16_WRITE_NOT_FOUND) {
-            message = "ed: file not found\n";
+            message = "edit: file not found\n";
         } else if (result == FAT16_WRITE_NO_SPACE) {
-            message = "ed: not enough disk space\n";
+            message = "edit: not enough disk space\n";
         } else if (result == FAT16_WRITE_NO_MEMORY) {
-            message = "ed: not enough memory for disk operation\n";
+            message = "edit: not enough memory for disk operation\n";
         } else if (result == FAT16_WRITE_BAD_FS) {
-            message = "ed: FAT16 filesystem unavailable\n";
+            message = "edit: FAT16 filesystem unavailable\n";
         } else if (result == FAT16_WRITE_NOT_FILE) {
-            message = "ed: target is not a file\n";
+            message = "edit: target is not a file\n";
         } else if (result == FAT16_WRITE_NOT_EMPTY) {
-            message = "ed: file changed while editing; no changes committed\n";
+            message = "edit: file changed while editing; no changes committed\n";
         } else if (result == FAT16_WRITE_TOO_LARGE) {
-            message = "ed: edited file is too large for this operation\n";
+            message = "edit: edited file is too large for this operation\n";
         } else if (result == FAT16_WRITE_IO_ERROR) {
-            message = "ed: disk read, write, or verification failed\n";
+            message = "edit: disk read, write, or verification failed\n";
         } else {
-            message = "ed: saving the edited file failed\n";
+            message = "edit: saving the edited file failed\n";
         }
     }
 
@@ -1203,7 +1208,7 @@ cleanup:
         terminal_write(message);
 
     if (saved) {
-        terminal_write("ed: saved ");
+        terminal_write("edit: saved ");
         terminal_write(filename);
         terminal_write("\n");
     }
@@ -1400,6 +1405,12 @@ static bool shell_wt_filesystem_test(void) {
             return false;
         }
     }
+    if (dir->reserved) {
+        closedir(dir);
+        diagnostics_log("Watchtower filesystem test: directory traversal stopped after a disk read failure.");
+        terminal_write("Root directory read: FAILED\n");
+        return false;
+    }
     closedir(dir);
 
     terminal_write("Disk probe: PASS\n");
@@ -1495,7 +1506,7 @@ static void shell_wt(const char *argument) {
         ++length;
     }
     if (argument[length]) {
-        terminal_write("watchtower: command is too long. Type 'h wt' for usage.\n");
+        terminal_write("watchtower: subcommand is too long. Type 'h wt' for usage.\n");
         return;
     }
     command[length] = '\0';
@@ -1505,25 +1516,23 @@ static void shell_wt(const char *argument) {
     while (length > start && (command[length - 1] == ' ' || command[length - 1] == '\t'))
         command[--length] = '\0';
     const char *sub = command + start;
-    char expanded_sub[64];
-    sub = shell_expand_first_word(sub, expanded_sub, sizeof(expanded_sub), true);
     if (!*sub || strcmp_local(sub, "status") == 0) {
         shell_wt_status();
         return;
     }
-    if (strcmp_local(sub, "log") == 0) {
+    if (strcmp_local(sub, "log") == 0 || strcmp_local(sub, "lg") == 0) {
         shell_wt_log(10);
         return;
     }
-    if (starts_with_local(sub, "log ")) {
-        const char *p = sub + 4;
+    if (starts_with_local(sub, "log ") || starts_with_local(sub, "lg ")) {
+        const char *p = starts_with_local(sub, "lg ") ? sub + 3 : sub + 4;
         while (*p == ' ' || *p == '\t')
             ++p;
         u32 limit = 0;
         bool valid = *p >= '0' && *p <= '9';
         while (*p >= '0' && *p <= '9') {
             u32 digit = (u32)(*p - '0');
-            if (limit > 100000) {
+            if (limit > (0xFFFFFFFFu - digit) / 10) {
                 valid = false;
                 break;
             }
@@ -1533,39 +1542,36 @@ static void shell_wt(const char *argument) {
         while (*p == ' ' || *p == '\t')
             ++p;
         if (!valid || *p || limit == 0) {
-            terminal_write("Usage: wt log [count] or wt lg [count]\n");
+            terminal_write("Usage: watchtower log [count] | wt lg [count]\n");
             return;
         }
         shell_wt_log(limit);
         return;
     }
-    if (strcmp_local(sub, "clear") == 0) {
+    if (strcmp_local(sub, "clear") == 0 || strcmp_local(sub, "cls") == 0) {
         diagnostics_clear_events();
-        terminal_write("Watchtower in-memory event history cleared.\n");
+        terminal_write("watchtower: in-memory event history cleared.\n");
         return;
     }
     if (strcmp_local(sub, "selftest") == 0) {
-        terminal_write("Running Watchtower event-history self-test...\n");
-        if (diagnostics_selftest())
-            terminal_write("Watchtower self-test: PASS\n");
-        else
-            terminal_write("Watchtower self-test: FAILED\n");
+        terminal_write("watchtower: running the event-history self-test.\n");
+        terminal_write(diagnostics_selftest() ? "watchtower self-test: PASS\n" : "watchtower self-test: FAILED\n");
         return;
     }
     if (strcmp_local(sub, "memtest") == 0) {
-        terminal_write("Running repeated memory allocation, mapping and release tests...\n");
+        terminal_write("watchtower: running repeated memory and paging tests.\n");
         shell_wt_memory_test();
         return;
     }
     if (strcmp_local(sub, "fscheck") == 0) {
-        terminal_write("Running read-only disk and filesystem checks...\n");
+        terminal_write("watchtower: running read-only disk and filesystem checks.\n");
         if (!shell_wt_filesystem_test())
-            terminal_write("Filesystem check: FAILED\n");
+            terminal_write("watchtower filesystem check: FAILED\n");
         else
-            terminal_write("Filesystem check: PASS\n");
+            terminal_write("watchtower filesystem check: PASS\n");
         return;
     }
-    if (strcmp_local(sub, "report") == 0) {
+    if (strcmp_local(sub, "report") == 0 || strcmp_local(sub, "rp") == 0) {
         terminal_write("=== AngOS Watchtower Report ===\n");
         shell_wt_status();
         shell_wt_log(10);
@@ -1574,6 +1580,7 @@ static void shell_wt(const char *argument) {
     }
     terminal_write("watchtower: unknown subcommand. Type 'h wt' for usage.\n");
 }
+
 static void shell_help(const char *topic) {
     char expanded_topic[64];
     topic = shell_expand_first_word(topic, expanded_topic, sizeof(expanded_topic), false);
@@ -1581,141 +1588,123 @@ static void shell_help(const char *topic) {
         topic = "";
     while (*topic == ' ' || *topic == '\t')
         ++topic;
+
+    topic = shell_normalize_command(topic);
     if (!*topic) {
         terminal_write("ANGOS COMMAND REFERENCE\n");
-        terminal_write("Use: help [command] or h [command] for detailed command help.\n");
-        terminal_write("Argument notation: <required> must be supplied; [optional] may be omitted.\n");
-        terminal_write("Do not type the angle brackets or square brackets themselves.\n");
-        terminal_write("Full command names and aliases are listed in separate columns.\n\n");
-        terminal_write("COMMAND     ALIAS   USAGE                         DESCRIPTION\n");
-        terminal_write("--------------------------------------------------------------------------------\n");
-        terminal_write("help        h       help [command]                Show command help\n");
-        terminal_write("clear       cls     clear                         Clear the terminal\n");
-        terminal_write("version     ver     version                       Display AngOS version\n");
-        terminal_write("disk                disk                          Detect primary disk\n");
-        terminal_write("diskread            diskread                      Read sector zero\n");
-        terminal_write("diskinit            diskinit                      Initialize disk tables\n");
-        terminal_write("fstest              fstest                        Test reading a known file\n");
-        terminal_write("list        ls      list [directory]              List directory entries\n");
-        terminal_write("cat         ct      cat <file>                    Display a text file\n");
-        terminal_write("status      stat    status <path>                 Show path and file details\n");
-        terminal_write("new         nw      new <filename>                Create an empty file\n");
-        terminal_write("echo        ec      echo [text]                   Print text to terminal\n");
-        terminal_write("edit        ed      edit <file> <action> [text]   Edit a file line\n");
-        terminal_write("copy        cp      copy <source> <dest>          Copy file to root directory\n");
-        terminal_write("remove      rm      remove <filename>             Delete a file\n");
-        terminal_write("watchtower  wt      watchtower [subcommand]       Inspect system diagnostics\n");
-        terminal_write("fat                 fat                           Detect filesystem type\n");
-        terminal_write("fatls               fatls                         Legacy FAT directory list\n");
-        terminal_write("fatcat              fatcat <file>                 Legacy FAT file display\n");
-        terminal_write("reboot              reboot                        Restart the machine\n");
-        terminal_write("\nDetailed help: use help <command> or h <alias>.\n");
+        terminal_write("Use: help [command] | h [command] for detailed help.\n");
+        terminal_write("Notation: <required> must be supplied; [optional] may be omitted.\n");
+        terminal_write("          Do not type the angle brackets or square brackets.\n\n");
+        terminal_write("COMMAND    ALIAS    USAGE                          DESCRIPTION\n");
+        terminal_write("---------- -------- ------------------------------ ------------------------\n");
+        terminal_write("help       h        help [command]                 Show detailed help\n");
+        terminal_write("clear      cls      clear                          Clear terminal output\n");
+        terminal_write("version    ver      version                        Show kernel version\n");
+        terminal_write("disk                disk                           Probe primary disk\n");
+        terminal_write("diskread            diskread                       Read disk sector zero\n");
+        terminal_write("diskinit            diskinit                       Initialize disk tables\n");
+        terminal_write("fstest              fstest                         Test file reading\n");
+        terminal_write("list       ls       list [directory]               List directory entries\n");
+        terminal_write("cat        ct       cat <file>                     Display file contents\n");
+        terminal_write("status     stat     status <path>                  Show file or directory\n");
+        terminal_write("new        nw       new <filename>                 Create an empty file\n");
+        terminal_write("echo       ec       echo [text]                    Print text or a blank line\n");
+        terminal_write("edit       ed       edit <file> <action> [text]    Edit one file line\n");
+        terminal_write("copy       cp       copy <source> <destination>   Copy a file\n");
+        terminal_write("remove     rm       remove <filename>              Delete a file\n");
+        terminal_write("watchtower wt       watchtower [subcommand]         Inspect diagnostics\n");
+        terminal_write("fat                 fat                            Detect supported FAT type\n");
+        terminal_write("fatls               fatls                          Legacy FAT listing\n");
+        terminal_write("fatcat              fatcat <filename>              Legacy FAT reader\n");
+        terminal_write("reboot              reboot                         Restart the machine\n");
         return;
     }
     if (strcmp_local(topic, "h") == 0) {
-        terminal_write("Command : help\n");
-        terminal_write("Alias   : h\n");
+        terminal_write("Command : help | h\n");
         terminal_write("Purpose : Show the complete command reference or help for one command.\n");
-        terminal_write("Usage   : help [command]\n");
-        terminal_write("Alias usage: h [command]\n");
+        terminal_write("Usage: help [command] | h [command]\n");
         terminal_write("Details : Omit command to display the full command list. Supply either\n");
         terminal_write("          the full command name or its listed alias for detailed help.\n");
         terminal_write("Example : help edit\n");
         terminal_write("          h ed\n");
     } else if (strcmp_local(topic, "cls") == 0) {
-        terminal_write("Command : clear\n");
-        terminal_write("Alias   : cls\n");
+        terminal_write("Command : clear | cls\n");
         terminal_write("Purpose : Clear the current terminal display without restarting AngOS.\n");
-        terminal_write("Usage   : clear\n");
-        terminal_write("Alias usage: cls\n");
+        terminal_write("Usage: clear | cls\n");
         terminal_write("Example : clear\n");
         terminal_write("          cls\n");
     } else if (strcmp_local(topic, "ver") == 0) {
-        terminal_write("Command : version\n");
-        terminal_write("Alias   : ver\n");
+        terminal_write("Command : version | ver\n");
         terminal_write("Purpose : Display the AngOS version and architecture string.\n");
-        terminal_write("Usage   : version\n");
-        terminal_write("Alias usage: ver\n");
+        terminal_write("Usage: version | ver\n");
         terminal_write("Example : version\n");
     } else if (strcmp_local(topic, "disk") == 0) {
         terminal_write("Command : disk\n");
         terminal_write("Purpose : Probe the primary ATA disk and display its reported capacity.\n");
-        terminal_write("Usage   : disk\n");
+        terminal_write("Usage: disk\n");
         terminal_write("Details : This reports whether the primary disk responds to identification.\n");
         terminal_write("Example : disk\n");
     } else if (strcmp_local(topic, "diskread") == 0) {
         terminal_write("Command : diskread\n");
         terminal_write("Purpose : Read disk sector zero and display its signature information.\n");
-        terminal_write("Usage   : diskread\n");
+        terminal_write("Usage: diskread\n");
         terminal_write("Details : This is a read-only diagnostic command. It does not change the disk.\n");
         terminal_write("Example : diskread\n");
     } else if (strcmp_local(topic, "diskinit") == 0) {
         terminal_write("Command : diskinit\n");
         terminal_write("Purpose : Initialize the disk, partition and filesystem tables.\n");
-        terminal_write("Usage   : diskinit\n");
+        terminal_write("Usage: diskinit\n");
         terminal_write("Details : Reports the filesystem type detected for the primary partition.\n");
         terminal_write("Example : diskinit\n");
     } else if (strcmp_local(topic, "fstest") == 0) {
         terminal_write("Command : fstest\n");
         terminal_write("Purpose : Test opening and reading a known bootloader file.\n");
-        terminal_write("Usage   : fstest\n");
+        terminal_write("Usage: fstest\n");
         terminal_write("Details : Use this to investigate basic file-open and file-read behaviour.\n");
         terminal_write("          It is a diagnostic test and does not repair the filesystem.\n");
         terminal_write("Example : fstest\n");
     } else if (strcmp_local(topic, "ls") == 0) {
-        terminal_write("Command : list\n");
-        terminal_write("Alias   : ls\n");
+        terminal_write("Command : list | ls\n");
         terminal_write("Purpose : Display the entries in a directory.\n");
-        terminal_write("Usage   : list [directory]\n");
-        terminal_write("Alias usage: ls [directory]\n");
+        terminal_write("Usage: list [directory] | ls [directory]\n");
         terminal_write("Details : If directory is omitted, the root directory on volume A is listed.\n");
         terminal_write("Example : list\n");
         terminal_write("          ls EFI/BOOT\n");
     } else if (strcmp_local(topic, "ct") == 0) {
-        terminal_write("Command : cat\n");
-        terminal_write("Alias   : ct\n");
+        terminal_write("Command : cat | ct\n");
         terminal_write("Purpose : Display readable text from one file without editing it.\n");
-        terminal_write("Usage   : cat <file>\n");
-        terminal_write("Alias usage: ct <file>\n");
+        terminal_write("Usage: cat <file> | ct <file>\n");
         terminal_write("Details : The file argument is required. Output is sent to the terminal.\n");
         terminal_write("Example : cat notes.txt\n");
         terminal_write("          ct notes.txt\n");
     } else if (strcmp_local(topic, "stat") == 0) {
-        terminal_write("Command : status\n");
-        terminal_write("Alias   : stat\n");
+        terminal_write("Command : status | stat\n");
         terminal_write("Purpose : Report whether a path is a file or directory, and show file size.\n");
-        terminal_write("Usage   : status <path>\n");
-        terminal_write("Alias usage: stat <path>\n");
+        terminal_write("Usage: status <path> | stat <path>\n");
         terminal_write("Details : The path is required. This command does not modify the target.\n");
         terminal_write("Example : status notes.txt\n");
         terminal_write("          stat notes.txt\n");
     } else if (strcmp_local(topic, "nw") == 0) {
-        terminal_write("Command : new\n");
-        terminal_write("Alias   : nw\n");
+        terminal_write("Command : new | nw\n");
         terminal_write("Purpose : Create a new empty file.\n");
-        terminal_write("Usage   : new <filename>\n");
-        terminal_write("Alias usage: nw <filename>\n");
+        terminal_write("Usage: new <filename> | nw <filename>\n");
         terminal_write("Details : The filename is required. The current implementation supports\n");
         terminal_write("          FAT 8.3 filenames in the FAT16 root directory and does not overwrite\n");
         terminal_write("          an existing file with the same name.\n");
         terminal_write("Example : new notes.txt\n");
         terminal_write("          nw notes.txt\n");
     } else if (strcmp_local(topic, "ec") == 0) {
-        terminal_write("Command : echo\n");
-        terminal_write("Alias   : ec\n");
+        terminal_write("Command : echo | ec\n");
         terminal_write("Purpose : Print text to the terminal.\n");
-        terminal_write("Usage   : echo [text]\n");
-        terminal_write("Alias usage: ec [text]\n");
+        terminal_write("Usage: echo [text] | ec [text]\n");
         terminal_write("Details : Text is optional. With no text, the command prints a blank line.\n");
         terminal_write("          The text is displayed only; it is not saved to a file.\n");
         terminal_write("Example : echo Hello from AngOS\n");
         terminal_write("          ec Hello from AngOS\n");
     } else if (strcmp_local(topic, "ed") == 0) {
-        terminal_write("Command : edit\n");
-        terminal_write("Alias   : ed\n");
+        terminal_write("Command : edit | ed\n");
         terminal_write("Purpose : Insert, replace or delete one line in an existing text file.\n");
-        terminal_write("Usage   : edit <file> <action> [text]\n");
-        terminal_write("Alias usage: ed <file> <action> [text]\n");
+        terminal_write("Usage: edit <file> <action> [text] | ed <file> <action> [text]\n");
         terminal_write("Details : The file and action are required. Text is required for insert\n");
         terminal_write("          and replace actions, and must be omitted for delete actions.\n");
         terminal_write("          Line numbers start at 1. Do not type the placeholder brackets.\n\n");
@@ -1736,100 +1725,78 @@ static void shell_help(const char *topic) {
         terminal_write("  edit notes.txt -1\n");
         terminal_write("  ed notes.txt +1 \"Text with spaces\"\n");
     } else if (strcmp_local(topic, "cp") == 0) {
-        terminal_write("Command : copy\n");
-        terminal_write("Alias   : cp\n");
+        terminal_write("Command : copy | cp\n");
         terminal_write("Purpose : Copy the contents of one file to a new root-directory file.\n");
-        terminal_write("Usage   : copy <source-file> <destination-name>\n");
-        terminal_write("Alias usage: cp <source-file> <destination-name>\n");
+        terminal_write("Usage: copy <source-file> <destination-name> | cp <source-file> <destination-name>\n");
         terminal_write("Details : Both arguments are required. The source can be in a subdirectory;\n");
         terminal_write("          the destination is a FAT 8.3 filename in the root directory.\n");
         terminal_write("          Directory copying is not supported.\n");
         terminal_write("Example : copy notes.txt backup.txt\n");
         terminal_write("          cp notes.txt backup.txt\n");
     } else if (strcmp_local(topic, "rm") == 0) {
-        terminal_write("Command : remove\n");
-        terminal_write("Alias   : rm\n");
+        terminal_write("Command : remove | rm\n");
         terminal_write("Purpose : Delete a file entry and release its FAT16 cluster chain.\n");
-        terminal_write("Usage   : remove <filename>\n");
-        terminal_write("Alias usage: rm <filename>\n");
+        terminal_write("Usage: remove <filename> | rm <filename>\n");
         terminal_write("Details : The filename is required. Current support is limited to FAT16\n");
         terminal_write("          root-directory files with FAT 8.3 names. Directories are not supported.\n");
         terminal_write("          Deletion is permanent. If disk I/O fails, inspect the filesystem.\n");
         terminal_write("Example : remove notes.txt\n");
         terminal_write("          rm notes.txt\n");
-    } else if (strcmp_local(topic, "wt") == 0) {
-        terminal_write("Command : watchtower\n");
-        terminal_write("Alias   : wt\n");
-        terminal_write("Purpose : Inspect AngOS diagnostics, review recent events, and run memory\n");
-        terminal_write("          and read-only disk and filesystem checks from the shell.\n");
-        terminal_write("Usage   : watchtower [subcommand]\n");
-        terminal_write("Alias usage: wt [subcommand]\n");
-        terminal_write("Details : With no subcommand, Watchtower displays status. Its in-memory\n");
-        terminal_write("          history stores up to 32 events and does not persist across reboot.\n");
-        terminal_write("          Panic reports are emitted by the kernel panic reporter.\n\n");
-        terminal_write("Argument notation: <required> must be supplied; [optional] may be omitted.\n");
+        } else if (strcmp_local(topic, "wt") == 0) {
+        terminal_write("Command : watchtower | wt\n");
+        terminal_write("Purpose : Diagnose AngOS, inspect recent events and run health checks.\n");
+        terminal_write("Usage: watchtower [subcommand] | wt [subcommand]\n");
+        terminal_write("Details : Watchtower records up to 32 diagnostic events in memory.\n");
+        terminal_write("          The history is cleared on reboot and does not replace a saved report.\n\n");
+        terminal_write("Notation: <required> must be supplied; [optional] may be omitted.\n");
         terminal_write("          Do not type the brackets themselves.\n\n");
         terminal_write("Subcommands:\n");
-        terminal_write("  wt status\n");
-        terminal_write("      Show whether diagnostics initialized and how many events are buffered.\n");
-        terminal_write("      This command does not clear or add events.\n\n");
-        terminal_write("  wt log [count]\n");
-        terminal_write("  wt lg [count] (alias for wt log [count])\n");
-        terminal_write("      Display the newest count events available, in chronological order.\n");
-        terminal_write("      Count is optional and defaults to 10. It must be a positive number.\n");
-        terminal_write("      At most the 32 events stored in memory can be displayed.\n\n");
-        terminal_write("  wt clear\n");
-        terminal_write("  wt cls (alias for wt clear)\n");
-        terminal_write("      Clear the in-memory event history. This does not delete files or\n");
-        terminal_write("      change any diagnostic output already saved outside AngOS.\n\n");
-        terminal_write("  wt selftest\n");
-        terminal_write("      Record a test event and verify that Watchtower can retrieve it.\n");
-        terminal_write("      The test itself adds an event to the history.\n\n");
-        terminal_write("  wt memtest\n");
-        terminal_write("      Exercise repeated heap allocations, memory writes, data verification,\n");
-        terminal_write("      virtual mappings and physical-page release. It does not write files.\n\n");
-        terminal_write("  wt fscheck\n");
-        terminal_write("      Run read-only disk probing, sector reading, FAT detection and root\n");
-        terminal_write("      directory traversal. It does not create, edit or delete files.\n\n");
-        terminal_write("  wt report\n");
-        terminal_write("  wt rp (alias for wt report)\n");
-        terminal_write("      Display status and up to 10 newest diagnostic events. It prints to\n");
-        terminal_write("      the terminal and does not save a report to a file.\n\n");
+        terminal_write("  watchtower status | wt status\n");
+        terminal_write("      Show diagnostic initialization and the number of buffered events.\n\n");
+        terminal_write("  watchtower log [count] | wt lg [count]\n");
+        terminal_write("      Display recent events from oldest to newest. Count defaults to 10\n");
+        terminal_write("      and is capped at the 32 events held in memory. Count must be positive.\n\n");
+        terminal_write("  watchtower clear | wt cls\n");
+        terminal_write("      Clear only the in-memory event history.\n\n");
+        terminal_write("  watchtower selftest | wt selftest\n");
+        terminal_write("      Record and verify a test event in the event history.\n\n");
+        terminal_write("  watchtower memtest | wt memtest\n");
+        terminal_write("      Exercise repeated heap allocations, data integrity, virtual mappings\n");
+        terminal_write("      and physical-page allocation and release.\n\n");
+        terminal_write("  watchtower fscheck | wt fscheck\n");
+        terminal_write("      Run read-only disk, filesystem and root-directory checks.\n\n");
+        terminal_write("  watchtower report | wt rp\n");
+        terminal_write("      Show current diagnostic status and the 10 most recent events.\n\n");
         terminal_write("Examples:\n");
-        terminal_write("  wt status\n");
-        terminal_write("  wt log 10\n");
+        terminal_write("  watchtower log 20\n");
         terminal_write("  wt lg 10\n");
-        terminal_write("  wt clear\n");
-        terminal_write("  wt cls\n");
-        terminal_write("  wt selftest\n");
-        terminal_write("  wt memtest\n");
-        terminal_write("  wt fscheck\n");
-        terminal_write("  wt report\n");
+        terminal_write("  watchtower cls\n");
         terminal_write("  wt rp\n");
+
     } else if (strcmp_local(topic, "fat") == 0) {
         terminal_write("Command : fat\n");
         terminal_write("Purpose : Detect the FAT filesystem type on the primary disk.\n");
-        terminal_write("Usage   : fat\n");
+        terminal_write("Usage: fat\n");
         terminal_write("Details : This reports the detected type; it does not format the volume.\n");
         terminal_write("Example : fat\n");
     } else if (strcmp_local(topic, "fatls") == 0) {
         terminal_write("Command : fatls\n");
         terminal_write("Purpose : Run the legacy FAT16 root-directory listing routine.\n");
-        terminal_write("Usage   : fatls\n");
+        terminal_write("Usage: fatls\n");
         terminal_write("Details : Retained for compatibility and low-level filesystem diagnostics.\n");
         terminal_write("          Use list or ls for ordinary directory listings.\n");
         terminal_write("Example : fatls\n");
     } else if (strcmp_local(topic, "fatcat") == 0) {
         terminal_write("Command : fatcat\n");
         terminal_write("Purpose : Read a file using the legacy FAT16 reader.\n");
-        terminal_write("Usage   : fatcat <filename>\n");
+        terminal_write("Usage: fatcat <filename>\n");
         terminal_write("Details : Retained for compatibility and diagnostics. Use cat or ct for\n");
         terminal_write("          ordinary file display.\n");
         terminal_write("Example : fatcat notes.txt\n");
     } else if (strcmp_local(topic, "reboot") == 0) {
         terminal_write("Command : reboot\n");
         terminal_write("Purpose : Request a machine restart.\n");
-        terminal_write("Usage   : reboot\n");
+        terminal_write("Usage: reboot\n");
         terminal_write("Details : Save important work first; unsaved volatile state is lost.\n");
         terminal_write("Example : reboot\n");
     } else {
@@ -1838,6 +1805,7 @@ static void shell_help(const char *topic) {
     }
 }
 void execute_command(const char *cmd) {
+    cmd = shell_normalize_command(cmd);
     char expanded_command[128];
     cmd = shell_expand_first_word(cmd, expanded_command, sizeof(expanded_command), false);
 
@@ -2073,7 +2041,7 @@ void execute_command(const char *cmd) {
 
     } else if (strcmp_local(cmd, "ct") == 0) {
 
-        terminal_write("Usage: ct <file>\\n");
+        terminal_write("Usage: cat <file>\\n");
 
     } else if (
         starts_with_local(cmd, "ct ")
@@ -2107,7 +2075,7 @@ void execute_command(const char *cmd) {
         if (!fp) {
 
             terminal_write(
-                "ct: file not found\n"
+                "cat: file not found\n"
             );
 
         } else {
