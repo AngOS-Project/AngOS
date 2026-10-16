@@ -136,8 +136,7 @@ void *malloc_heap(size_t size, int heap) {
                         free(addr);
                         return 0;
                 }
-                map_page(phys, virt);
-                if (!find_physaddr(virt)) {
+                if (!map_page(phys, virt) || !find_physaddr(virt)) {
                         phys_page_free(phys);
                         diagnostics_log("Memory: virtual page mapping failed during heap allocation.");
                         free(addr);
@@ -513,9 +512,11 @@ void init_malloc() {
 	freespace[1][0].size = userspace_stack - userspace_heap;
 }
 
-void init_paging();
+bool init_paging(void);
 
-void init_memory() {
-	init_paging();
+bool init_memory(void) {
+	if (!init_paging())
+		return false;
 	init_malloc();
+	return true;
 }

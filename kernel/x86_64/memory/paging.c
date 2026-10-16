@@ -46,12 +46,12 @@ static struct table *get_pd(struct table *pdpt, u64 pdpt_idx) {
         return (struct table *)(pdpt->entry[pdpt_idx] & ADDR_MASK);
 }
 
-void map_2mb_page(void *phys, void *virt) {
+bool map_2mb_page(void *phys, void *virt) {
         u64 p = (u64)phys;
         u64 v = (u64)virt;
 
         if ((p & (PAGE_2M - 1)) || (v & (PAGE_2M - 1)))
-                return;
+                return false;
 
         unsigned pml4_idx = (v >> 39) & 0x1FF;
         unsigned pdpt_idx = (v >> 30) & 0x1FF;
@@ -59,22 +59,23 @@ void map_2mb_page(void *phys, void *virt) {
 
         struct table *pdpt = get_pdpt(pml4_idx);
         if (!pdpt)
-                return;
+                return false;
 
         struct table *pd = get_pd(pdpt, pdpt_idx);
         if (!pd)
-                return;
+                return false;
 
         pd->entry[pd_idx] =
                 (p & ADDR_MASK) | FLAGS | FLAG_PS;
+        return true;
 }
 
-void map_page(void *phys, void *virt) {
+bool map_page(void *phys, void *virt) {
         u64 p = (u64)phys;
         u64 v = (u64)virt;
 
         if ((p & (PAGE_SIZE - 1)) || (v & (PAGE_SIZE - 1)))
-                return;
+                return false;
 
         unsigned pml4_idx = (v >> 39) & 0x1FF;
         unsigned pdpt_idx = (v >> 30) & 0x1FF;
@@ -83,14 +84,14 @@ void map_page(void *phys, void *virt) {
 
         struct table *pdpt = get_pdpt(pml4_idx);
         if (!pdpt)
-                return;
+                return false;
 
         struct table *pd = get_pd(pdpt, pdpt_idx);
         if (!pd)
-                return;
+                return false;
 
         if (pd->entry[pd_idx] & FLAG_PS)
-                return;
+                return false;
 
         struct table *pt;
 
@@ -98,7 +99,7 @@ void map_page(void *phys, void *virt) {
                 pt = new_table();
 
                 if (!pt)
-                        return;
+                        return false;
 
                 pd->entry[pd_idx] =
                         ((u64)pt & ADDR_MASK) | FLAGS;
@@ -108,6 +109,7 @@ void map_page(void *phys, void *virt) {
 
         pt->entry[pt_idx] =
                 (p & ADDR_MASK) | FLAGS;
+        return true;
 }
 
 void *find_physaddr(void *virt) {
@@ -178,22 +180,24 @@ bool unmap_page(void *virt) {
         return true;
 }
 
-void init_paging(void) {
+bool init_paging(void) {
         memset(&pml4, 0, sizeof(pml4));
 
         for (u64 addr = 0;
              addr < FIRST_4GB;
              addr += PAGE_2M) {
-                map_2mb_page((void *)addr, (void *)addr);
+                if (!map_2mb_page((void *)addr, (void *)addr))
+                        return false;
         }
 
         for (size_t offset = 0;
              offset < kernel_size;
              offset += PAGE_SIZE) {
-                map_page(
+                if (!map_page(
                         (void *)((u64)kernel_paddr + offset),
                         (void *)((u64)kernel_vaddr + offset)
-                );
+                ))
+                        return false;
         }
 
         if (fb_addr && fb_size) {
@@ -203,10 +207,11 @@ void init_paging(void) {
                 for (size_t offset = 0;
                      offset < fb_size;
                      offset += PAGE_SIZE) {
-                        map_page(
+                        if (!map_page(
                                 (void *)((u64)fb_phys + offset),
                                 (void *)((u64)fb_virt + offset)
-                        );
+                        ))
+                                return false;
                 }
 
                 fb_addr = fb_virt;
@@ -215,7 +220,8 @@ void init_paging(void) {
         void *pml4_phys = find_physaddr(&pml4);
 
         if (!pml4_phys)
-                return;
+                return false;
 
         load_pml4((struct table *)pml4_phys);
+        return true;
 }

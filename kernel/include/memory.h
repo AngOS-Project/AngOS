@@ -25,8 +25,8 @@ typedef struct {
 	size_t blocks;
 } section;
 
-void init_memory();
-void map_page(void *phys, void *virt);
+bool init_memory(void);
+bool map_page(void *phys, void *virt);
 bool unmap_page(void *virt);
 void *find_physaddr(void *virt);
 void *phys_page_alloc();

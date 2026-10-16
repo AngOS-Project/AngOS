@@ -75,7 +75,11 @@ void init(tosaithe_loader_data *loader_data) {
         diagnostics_log("Boot: IDT initialized.");
         terminal_write("IDT OK\n");
 
-        init_memory();
+        if (!init_memory()) {
+                diagnostics_log("Boot failure: paging or heap initialization failed.");
+                terminal_write("PAGING FAILED\n");
+                diagnostics_panic("Paging initialization failed (software)", 0, 0, false, 0, false, 0);
+        }
         diagnostics_log("Boot checkpoint: paging and heap initialized.");
         diagnostics_log("Boot: paging initialization returned.");
         terminal_write("PAGING OK\n");
