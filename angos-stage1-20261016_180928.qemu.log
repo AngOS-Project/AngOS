@@ -1,0 +1,1 @@
+C:\msys64\mingw64\bin\qemu-system-x86_64.exe: -drive format=raw,file=fat:rw:qemu: Directory does not fit in FAT16 (capacity 516.06 MB)
