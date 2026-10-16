@@ -1,3 +1,5 @@
+static const char *shell_normalize_command(const char *command);
+
 #include <keyboard.h>
 #include <terminal.h>
 #include <cpu/IO.h>
@@ -1579,6 +1581,50 @@ static void shell_wt(const char *argument) {
         return;
     }
     terminal_write("watchtower: unknown subcommand. Type 'h wt' for usage.\n");
+}
+
+static const char *shell_normalize_command(const char *command) {
+    static char normalized[256];
+    char input[256];
+    if (!command)
+        command = "";
+    u32 n = 0;
+    while (command[n] && n < sizeof(input) - 1) {
+        input[n] = command[n];
+        ++n;
+    }
+    if (command[n])
+        return command;
+    input[n] = '\0';
+    u32 end = 0;
+    while (input[end] && input[end] != ' ' && input[end] != '\t')
+        ++end;
+    static const char *full_names[] = {"help", "clear", "version", "list", "cat", "status", "new", "echo", "edit", "copy", "remove", "watchtower"};
+    static const char *aliases[] = {"h", "cls", "ver", "ls", "ct", "stat", "nw", "ec", "ed", "cp", "rm", "wt"};
+    for (u32 k = 0; k < sizeof(full_names) / sizeof(full_names[0]); ++k) {
+        u32 length = 0;
+        while (full_names[k][length])
+            ++length;
+        if (length != end)
+            continue;
+        u32 j = 0;
+        while (j < length && input[j] == full_names[k][j])
+            ++j;
+        if (j != length)
+            continue;
+        u32 out = 0;
+        while (aliases[k][out]) {
+            normalized[out] = aliases[k][out];
+            ++out;
+        }
+        for (u32 i = end; input[i] && out < sizeof(normalized) - 1; ++i)
+            normalized[out++] = input[i];
+        normalized[out] = '\0';
+        return normalized;
+    }
+    for (u32 i = 0; i <= n; ++i)
+        normalized[i] = input[i];
+    return normalized;
 }
 
 static void shell_help(const char *topic) {
