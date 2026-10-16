@@ -6,12 +6,11 @@
 #define WT_LSR  (WT_COM1 + 5)
 
 static volatile bool wt_serial_ready;
+static volatile bool wt_serial_checked;
 
 static void wt_put_raw(char c) {
-    /*
-     * Poll with a limit. A missing serial device must never
-     * hold the kernel forever just because a log was requested.
-     */
+    if (!wt_serial_ready)
+        return;
     for (u32 spin = 0; spin < 1000000U; ++spin) {
         if (inb(WT_LSR) & 0x20) {
             outb(WT_COM1, (u8)c);
@@ -74,23 +73,24 @@ static void diagnostics_record(const char *message) {
 
 void diagnostics_init(void) {
     wt_initialized = true;
-    if (wt_serial_ready)
+    if (wt_serial_checked)
         return;
+    wt_serial_checked = true;
 
-    /*
-     * Initialize COM1 as an 8-N-1 serial port at 38400 baud.
-     * No heap allocation, framebuffer or filesystem is used.
-     */
     outb(WT_COM1 + 1, 0x00);
     outb(WT_COM1 + 3, 0x80);
     outb(WT_COM1 + 0, 0x03);
     outb(WT_COM1 + 1, 0x00);
     outb(WT_COM1 + 3, 0x03);
     outb(WT_COM1 + 2, 0xC7);
+    outb(WT_COM1 + 4, 0x1E);
+    outb(WT_COM1, 0xAE);
+    if (inb(WT_COM1) != 0xAE) {
+        outb(WT_COM1 + 4, 0x00);
+        return;
+    }
     outb(WT_COM1 + 4, 0x0B);
-
     wt_serial_ready = true;
-
     wt_write("[WATCHTOWER] Serial diagnostics initialized.\n");
 }
 
