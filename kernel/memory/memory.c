@@ -251,15 +251,19 @@ static void phys_sort_and_merge(phys_region_t *regions, size_t *count) {
                 if (regions[i].pages == 0)
                         continue;
 
-                if (out != 0) {
-                        u64 end =
-                                regions[out - 1].base +
-                                regions[out - 1].pages * PAGE_SIZE;
+                u64 current_end = regions[i].base + regions[i].pages * PAGE_SIZE;
 
-                        if (end == regions[i].base) {
-                                regions[out - 1].pages += regions[i].pages;
-                                continue;
-                        }
+                if (out == 0) {
+                        regions[out++] = regions[i];
+                        continue;
+                }
+
+                u64 previous_end = regions[out - 1].base + regions[out - 1].pages * PAGE_SIZE;
+
+                if (regions[i].base <= previous_end) {
+                        if (current_end > previous_end)
+                                regions[out - 1].pages = (current_end - regions[out - 1].base) / PAGE_SIZE;
+                        continue;
                 }
 
                 regions[out++] = regions[i];
@@ -357,6 +361,8 @@ void phys_memory_init(const tosaithe_loader_data *loader_data) {
         if (!loader_data || !loader_data->memmap)
                 return;
 
+        u32 invalid_entries = 0;
+
         for (u32 i = 0; i < loader_data->memmap_entries; ++i) {
                 const tsbp_mmap_entry *entry = &loader_data->memmap[i];
 
@@ -364,7 +370,17 @@ void phys_memory_init(const tosaithe_loader_data *loader_data) {
                         continue;
 
                 u64 begin = (u64)entry->base;
-                u64 end = begin + (u64)entry->length;
+                u64 length = (u64)entry->length;
+                u64 address_limit = ~(u64)0;
+
+                if (length == 0 ||
+                    begin > address_limit - length ||
+                    begin > address_limit - (PAGE_SIZE - 1)) {
+                        ++invalid_entries;
+                        continue;
+                }
+
+                u64 end = begin + length;
 
                 begin = (begin + PAGE_SIZE - 1) & ~(u64)(PAGE_SIZE - 1);
                 end &= ~(u64)(PAGE_SIZE - 1);
@@ -388,6 +404,9 @@ void phys_memory_init(const tosaithe_loader_data *loader_data) {
                 managed_regions[managed_region_count].pages = pages;
                 ++managed_region_count;
         }
+
+        if (invalid_entries != 0)
+                diagnostics_log("Memory: skipped invalid or overflowing memory-map entries.");
 
         phys_sort_and_merge(managed_regions, &managed_region_count);
 
