@@ -36,6 +36,8 @@
 
 #define DISKS 4
 
+static u64 disk_capacity[DISKS];
+
 diskdata *disktable;
 volume_t *volumes;
 
@@ -46,21 +48,45 @@ void smalldelay(void) {
 
 static bool ata_wait_not_busy(u16 port) {
     for (u32 i = 0; i < 1000000; ++i) {
-        if (!(inb(port + STS) & BSY))
-            return true;
+        u8 status = inb(port + STS);
+        if (status == 0)
+            return false;
+        if (!(status & BSY))
+            return !(status & (ERROR | DF));
     }
-
     return false;
 }
 
 static bool ata_wait_drq(u16 port) {
     for (u32 i = 0; i < 1000000; ++i) {
         u8 status = inb(port + STS);
-        if (status & (ERROR | DF))
+        if (status == 0 || (status & (ERROR | DF)))
             return false;
-        if ((status & BSY) == 0 && (status & DRQ))
+        if (!(status & BSY) && (status & DRQ))
             return true;
     }
+    return false;
+}
+
+static bool ata_request_valid(u64 LBA, u32 count, unsigned int disk) {
+    const u64 max_lba = 0x0000FFFFFFFFFFFFULL;
+    if (disk >= DISKS || count == 0 || count > 128 || LBA > max_lba || (u64)(count - 1) > max_lba - LBA) {
+        diagnostics_log("Disk: invalid drive, sector range or transfer count.");
+        return false;
+    }
+    u64 capacity = disk_capacity[disk];
+    if (!capacity && disktable)
+        capacity = disktable[disk].blocks;
+    if (capacity && (LBA >= capacity || (u64)count > capacity - LBA)) {
+        diagnostics_log("Disk: request exceeds the reported drive capacity.");
+        return false;
+    }
+    return true;
+}
+
+static bool disk_read_failed(void *buffer, const char *message) {
+    memset(buffer, 0, SECTOR_SIZE);
+    diagnostics_log(message);
     return false;
 }
 
@@ -101,114 +127,113 @@ bool disk_probe(u64 *blocks) {
     for (u16 i = 0; i < 256; ++i)
         id[i] = inw(port + DAT);
 
+    u8 final_status = inb(port + STS);
+    if (final_status == 0 || (final_status & (BSY | ERROR | DF)))
+        return false;
+
     *blocks =
         (u64)id[100] |
         ((u64)id[101] << 16) |
         ((u64)id[102] << 32) |
         ((u64)id[103] << 48);
 
+    if (*blocks != 0)
+        disk_capacity[0] = *blocks;
     return *blocks != 0;
 }
 
 bool disk_read_sector(u64 LBA, void *buffer, unsigned int disk) {
     if (!buffer)
         return false;
+    if (!ata_request_valid(LBA, 1, disk))
+        return disk_read_failed(buffer, "Disk: rejected a sector read request.");
 
     u16 *buf = (u16 *)buffer;
-
-    u16 port = PRIMARY;
-    u8 outcmd = 0x40;
-
-    if (disk >= 2)
-        port = SECOND;
-
-    if (disk % 2)
-        outcmd = 0x50;
+    u16 port = disk >= 2 ? SECOND : PRIMARY;
+    u8 select = disk % 2 ? 0x50 : 0x40;
 
     if (!ata_wait_not_busy(port))
-        return false;
+        return disk_read_failed(buffer, "Disk: drive unavailable before sector read.");
 
-    outb(port + DHR, outcmd);
-
+    outb(port + DHR, select);
+    for (u8 i = 0; i < 5; ++i)
+        inb(port + STS);
     outb(port + SEC, 0);
     outb(port + LBALO, (u8)(LBA >> 24));
     outb(port + LBAMID, (u8)(LBA >> 32));
     outb(port + LBAHI, (u8)(LBA >> 40));
-
     outb(port + SEC, 1);
     outb(port + LBALO, (u8)LBA);
     outb(port + LBAMID, (u8)(LBA >> 8));
     outb(port + LBAHI, (u8)(LBA >> 16));
-
     outb(port + CMD, READ);
 
-    if (!ata_wait_not_busy(port))
-        return false;
-
-    if (!ata_wait_drq(port))
-        return false;
+    if (!ata_wait_not_busy(port) || !ata_wait_drq(port))
+        return disk_read_failed(buffer, "Disk: sector read timed out or reported an ATA error.");
 
     for (u16 i = 0; i < 256; ++i)
         buf[i] = inw(port + DAT);
 
+    if (!ata_wait_not_busy(port))
+        return disk_read_failed(buffer, "Disk: sector read did not finish before timeout.");
+    u8 final_status = inb(port + STS);
+    if (final_status == 0 || (final_status & (BSY | ERROR | DF)))
+        return disk_read_failed(buffer, "Disk: sector read failed its final status check.");
+
     return true;
 }
 
-bool disk_write_sector(
-    u64 LBA,
-    const void *buffer,
-    unsigned int disk
-) {
-    if (!buffer || disk >= 4)
+bool disk_write_sector(u64 LBA, const void *buffer, unsigned int disk) {
+    if (!buffer || !ata_request_valid(LBA, 1, disk)) {
+        diagnostics_log("Disk: rejected a sector write request.");
         return false;
+    }
 
     const u16 *buf = (const u16 *)buffer;
+    u16 port = disk >= 2 ? SECOND : PRIMARY;
+    u8 select = disk % 2 ? 0x50 : 0x40;
 
-    u16 port = PRIMARY;
-    u8 outcmd = 0x40;
-
-    if (disk >= 2)
-        port = SECOND;
-
-    if (disk % 2)
-        outcmd = 0x50;
-
-    if (!ata_wait_not_busy(port))
+    if (!ata_wait_not_busy(port)) {
+        diagnostics_log("Disk: drive unavailable before sector write.");
         return false;
+    }
 
-    outb(port + DHR, outcmd);
-
+    outb(port + DHR, select);
+    for (u8 i = 0; i < 5; ++i)
+        inb(port + STS);
     outb(port + SEC, 0);
     outb(port + LBALO, (u8)(LBA >> 24));
     outb(port + LBAMID, (u8)(LBA >> 32));
     outb(port + LBAHI, (u8)(LBA >> 40));
-
     outb(port + SEC, 1);
     outb(port + LBALO, (u8)LBA);
     outb(port + LBAMID, (u8)(LBA >> 8));
     outb(port + LBAHI, (u8)(LBA >> 16));
-
     outb(port + CMD, WRITE);
 
-    if (!ata_wait_not_busy(port))
+    if (!ata_wait_not_busy(port) || !ata_wait_drq(port)) {
+        diagnostics_log("Disk: sector write timed out or reported an ATA error before data transfer.");
         return false;
-
-    if (!ata_wait_drq(port))
-        return false;
+    }
 
     for (u16 i = 0; i < 256; ++i)
         outw(port + DAT, buf[i]);
 
-    if (!ata_wait_not_busy(port))
+    if (!ata_wait_not_busy(port)) {
+        diagnostics_log("Disk: sector write did not finish before timeout.");
         return false;
+    }
+    u8 final_status = inb(port + STS);
+    if (final_status == 0 || (final_status & (BSY | ERROR | DF))) {
+        diagnostics_log("Disk: sector write failed its final status check.");
+        return false;
+    }
 
-    u8 status = inb(port + STS);
-
-    return !(status & (ERROR | DF));
+    return true;
 }
 
 bool readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
-    if (!buffer || count == 0 || disk >= DISKS)
+    if (!buffer || !ata_request_valid(LBA, count, disk))
         return false;
 
     u16 *buf = (u16 *)buffer;
@@ -253,7 +278,7 @@ bool readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
     }
 
     u8 status = inb(port + STS);
-    if (status & (ERROR | DF)) {
+    if (status == 0 || (status & (BSY | ERROR | DF))) {
         memset(buffer, 0, (size_t)count * SECTOR_SIZE);
         diagnostics_log("Disk: multi-sector read ended with an ATA device error.");
         return false;
@@ -263,7 +288,7 @@ bool readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
 }
 
 bool writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
-    if (!buffer || count == 0 || disk >= DISKS)
+    if (!buffer || !ata_request_valid(LBA, count, disk))
         return false;
 
     const u16 *buf = (const u16 *)buffer;
@@ -305,7 +330,7 @@ bool writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
     }
 
     u8 status = inb(port + STS);
-    if (status & (ERROR | DF)) {
+    if (status == 0 || (status & (BSY | ERROR | DF))) {
         diagnostics_log("Disk: multi-sector write ended with an ATA device error.");
         return false;
     }
@@ -317,8 +342,18 @@ void init_disk(void) {
     disktable = malloc(sizeof(diskdata) * DISKS);
     volumes = malloc(sizeof(volume_t) * LETTERS);
 
-    if (!disktable || !volumes)
+    if (!disktable || !volumes) {
+        if (disktable) {
+            free(disktable);
+            disktable = 0;
+        }
+        if (volumes) {
+            free(volumes);
+            volumes = 0;
+        }
+        diagnostics_log("Disk: allocation of disk or volume tables failed.");
         return;
+    }
 
     memset(disktable, 0, sizeof(diskdata) * DISKS);
     memset(volumes, 0, sizeof(volume_t) * LETTERS);
@@ -327,6 +362,12 @@ void init_disk(void) {
 
     volumes[0].disk = 0;
     volumes[0].partition = 0;
+
+    u64 detected_blocks = 0;
+    if (disk_probe(&detected_blocks)) {
+        disktable[0].blocks = detected_blocks;
+        disk_capacity[0] = detected_blocks;
+    }
 
     int type = fat_detect(0);
 

@@ -18,156 +18,228 @@ static void wcatomba(u8 *dest, const wchar *src, size_t count) {
     }
 }
 
-void fat_setup(unsigned int disk, unsigned int part) {
-	bootrecord BPB;
-	fat_fs_info fs_info;
-	partinfo *info = &disktable[disk].parts[part];
-	u32 FAT_buffer[SECTOR_SIZE / 4];
-
-	readsectorpio(info->loc, 1, &BPB, disk);
-
-	fs_info.bytes_per_sector = BPB.bytes_per_sector;
-	fs_info.sectors_per_cluster = BPB.sectors_per_cluster;
-	fs_info.sectors_per_fat = BPB.sectors_per_FAT;
-
-	fs_info.root_cluster = BPB.root_cluster;
-	fs_info.root_entries = BPB.root_entries;
-	fs_info.root_sectors = (fs_info.root_entries * 32 + (fs_info.bytes_per_sector - 1)) / fs_info.bytes_per_sector;
-
-	fs_info.fat_count = BPB.FAT_count;
-
-	fs_info.fat = (BPB.reserved_sectors * fs_info.bytes_per_sector) / SECTOR_SIZE;
-	fs_info.data = fs_info.fat + (fs_info.fat_count * ((fs_info.sectors_per_fat * fs_info.bytes_per_sector) / SECTOR_SIZE)) - 2;
-
-	/* Checking how many clusters the root dir takes up */
-
-	fs_info.root_clusters = 1;
-	u32 current_cluster = fs_info.root_cluster;
-	readsectorpio(info->loc + fs_info.fat + current_cluster / FEPS, 1, FAT_buffer, disk);
-	do {
-		if (current_cluster / FEPS != FAT_buffer[current_cluster] / FEPS)
-			readsectorpio(info->loc + fs_info.fat + current_cluster / FEPS, 1, FAT_buffer, disk);
-		if ((FAT_buffer[current_cluster % FEPS] & 0x0FFFFFFF) < 0x0FFFFFF0) {
-			++fs_info.root_clusters;
-			current_cluster = FAT_buffer[current_cluster % FEPS];
-		}
-		else break;
-	} while (1);
-
-	if (BPB.sector_count_small)
-		fs_info.sector_count = BPB.sector_count_small;
-	else
-		fs_info.sector_count = BPB.sector_count_large;
-
-	info->fs = fat32;
-	info->fsdata = malloc(sizeof(fat_fs_info));
-	memcpy(info->fsdata, &fs_info, sizeof(fat_fs_info));
+bool fat_setup(unsigned int disk, unsigned int part) {
+    if (!disktable || disk >= 4 || part >= 4) {
+        diagnostics_log("FAT32 setup: invalid disk or partition index.");
+        return false;
+    }
+    partinfo *info = &disktable[disk].parts[part];
+    bootrecord BPB;
+    u32 FAT_buffer[SECTOR_SIZE / sizeof(u32)];
+    if (!readsectorpio(info->loc, 1, &BPB, disk)) {
+        diagnostics_log("FAT32 setup: boot-sector read failed.");
+        return false;
+    }
+    if (BPB.bytes_per_sector != SECTOR_SIZE || BPB.sectors_per_cluster == 0 || BPB.reserved_sectors == 0 || BPB.FAT_count == 0 || BPB.sectors_per_FAT == 0 || BPB.root_cluster < 2) {
+        diagnostics_log("FAT32 setup: invalid boot-sector metadata.");
+        return false;
+    }
+    fat_fs_info fs_info;
+    memset(&fs_info, 0, sizeof(fs_info));
+    fs_info.bytes_per_sector = BPB.bytes_per_sector;
+    fs_info.sectors_per_cluster = BPB.sectors_per_cluster;
+    fs_info.sectors_per_fat = BPB.sectors_per_FAT;
+    fs_info.root_cluster = BPB.root_cluster;
+    fs_info.root_entries = BPB.root_entries;
+    fs_info.root_sectors = (fs_info.root_entries * 32 + fs_info.bytes_per_sector - 1) / fs_info.bytes_per_sector;
+    fs_info.fat_count = BPB.FAT_count;
+    fs_info.fat = (BPB.reserved_sectors * fs_info.bytes_per_sector) / SECTOR_SIZE;
+    fs_info.data = fs_info.fat + (fs_info.fat_count * ((fs_info.sectors_per_fat * fs_info.bytes_per_sector) / SECTOR_SIZE)) - 2;
+    fs_info.sector_count = BPB.sector_count_small ? BPB.sector_count_small : BPB.sector_count_large;
+    if (fs_info.sector_count == 0) {
+        diagnostics_log("FAT32 setup: volume reports no sectors.");
+        return false;
+    }
+    u32 max_clusters = fs_info.sector_count / fs_info.sectors_per_cluster;
+    if (fs_info.root_cluster >= max_clusters + 2) {
+        diagnostics_log("FAT32 setup: root cluster is outside the volume.");
+        return false;
+    }
+    fs_info.root_clusters = 0;
+    u32 current_cluster = fs_info.root_cluster;
+    bool reached_end = false;
+    for (u32 step = 0; step < max_clusters; ++step) {
+        if (current_cluster < 2 || current_cluster >= max_clusters + 2) {
+            diagnostics_log("FAT32 setup: cluster chain contains an invalid cluster.");
+            return false;
+        }
+        if (!readsectorpio(info->loc + fs_info.fat + current_cluster / FEPS, 1, FAT_buffer, disk)) {
+            diagnostics_log("FAT32 setup: FAT-sector read failed.");
+            return false;
+        }
+        u32 next = FAT_buffer[current_cluster % FEPS] & 0x0FFFFFFF;
+        ++fs_info.root_clusters;
+        if (next >= 0x0FFFFFF8) {
+            reached_end = true;
+            break;
+        }
+        if (next < 2 || next == 0x0FFFFFF7 || next >= max_clusters + 2) {
+            diagnostics_log("FAT32 setup: root cluster chain is corrupt.");
+            return false;
+        }
+        current_cluster = next;
+    }
+    if (!reached_end) {
+        diagnostics_log("FAT32 setup: root cluster chain exceeded the volume limit.");
+        return false;
+    }
+    fat_fs_info *stored = malloc(sizeof(fat_fs_info));
+    if (!stored) {
+        diagnostics_log("FAT32 setup: filesystem metadata allocation failed.");
+        return false;
+    }
+    memcpy(stored, &fs_info, sizeof(fat_fs_info));
+    info->fsdata = stored;
+    info->fs = fat32;
+    return true;
 }
 
-
+static bool fat32_next_cluster(LBA partoffset, const fat_fs_info *fs_info, u32 cluster, unsigned int disk, u32 *next_cluster) {
+    u32 fat_buffer[SECTOR_SIZE / sizeof(u32)];
+    if (!fs_info || !next_cluster || cluster < 2 || !fs_info->sectors_per_cluster)
+        return false;
+    if (!readsectorpio(partoffset + fs_info->fat + cluster / FEPS, 1, fat_buffer, disk)) {
+        diagnostics_log("FAT32: FAT-sector read failed while following a cluster chain.");
+        return false;
+    }
+    *next_cluster = fat_buffer[cluster % FEPS] & 0x0FFFFFFF;
+    return true;
+}
 
 size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
-	unsigned int disk = volumes[fp->volume].disk;
-	unsigned int part = volumes[fp->volume].partition;
-	LBA partoffset = disktable[disk].parts[part].loc;
-
-	const size_t return_value = bytes;
-
-	fat_fs_info *fs_info = (fat_fs_info *) disktable[disk].parts[part].fsdata;
-	const u32 bytes_per_cluster = fs_info->bytes_per_sector * fs_info->sectors_per_cluster;
-	u32 skipped_clusters = fp->pointer / bytes_per_cluster;
-
-	u32 *FAT_buffer = malloc(SECTOR_SIZE);
-	u8 *buffer = malloc(bytes_per_cluster);
-	char filename[256];
-
-	FAT_entry entry;
-	u32 active_cluster;
-
-	find_fat_entry(&entry, filename, fp);
-	active_cluster = entry.cluster_high << 16 | entry.cluster_low;
-
-	readsectorpio(partoffset + fs_info->fat + active_cluster / FEPS, 1, FAT_buffer, disk);
-
-	for (u32 i = 0; i < skipped_clusters; ++i) {
-		if (active_cluster / FEPS != FAT_buffer[active_cluster % FEPS] / FEPS) {
-			readsectorpio(partoffset + fs_info->fat + FAT_buffer[active_cluster % FEPS] / FEPS, fs_info->sectors_per_cluster, FAT_buffer, disk);
-		}
-		active_cluster = FAT_buffer[active_cluster % FEPS];
-	}
-
-	if (fp->pointer % bytes_per_cluster) {
-		readsectorpio(partoffset + fs_info->data + active_cluster * fs_info->sectors_per_cluster, (fs_info->bytes_per_sector / SECTOR_SIZE) * fs_info->sectors_per_cluster, buffer, disk);
-
-		if (bytes > bytes_per_cluster - fp->pointer % bytes_per_cluster) {
-			memcpy(ptr, buffer + fp->pointer % bytes_per_cluster, bytes_per_cluster - fp->pointer % bytes_per_cluster);
-			ptr += bytes_per_cluster - fp->pointer % bytes_per_cluster;
-			bytes -= bytes_per_cluster - fp->pointer % bytes_per_cluster;
-		}
-		else {
-			memcpy(ptr, buffer + fp->pointer % bytes_per_cluster, bytes);
-			return return_value;
-		}
-
-		if (active_cluster / FEPS != FAT_buffer[active_cluster % FEPS] / FEPS) {
-			readsectorpio(partoffset + fs_info->fat + FAT_buffer[active_cluster % FEPS] / FEPS, fs_info->sectors_per_cluster, FAT_buffer, disk);
-		}
-		active_cluster = FAT_buffer[active_cluster % FEPS];
-	}
-
-	do {
-		readsectorpio(partoffset + fs_info->data + active_cluster * fs_info->sectors_per_cluster, (fs_info->bytes_per_sector / SECTOR_SIZE) * fs_info->sectors_per_cluster, buffer, disk);
-		if (bytes > bytes_per_cluster) {
-			memcpy(ptr, buffer, bytes_per_cluster);
-			bytes -= bytes_per_cluster;
-		}
-		else {
-			memcpy(ptr, buffer, bytes);
-			break;
-		}
-		ptr += bytes_per_cluster;
-
-		if (active_cluster / FEPS != FAT_buffer[active_cluster % FEPS] / FEPS) {
-			readsectorpio(partoffset + fs_info->fat + FAT_buffer[active_cluster % FEPS] / FEPS, fs_info->sectors_per_cluster, FAT_buffer, disk);
-		}
-		else
-			active_cluster = FAT_buffer[active_cluster % FEPS];
-
-	} while ((active_cluster & 0x0FFFFFFF) < 0x0FFFFFF0);
-
-	free(FAT_buffer);
-	return return_value;
+    if (!ptr || !fp || !fp->path || !volumes || !disktable || fp->volume >= LETTERS || bytes == 0)
+        return 0;
+    unsigned int disk = volumes[fp->volume].disk;
+    unsigned int part = volumes[fp->volume].partition;
+    if (disk >= 4 || part >= 4)
+        return 0;
+    fat_fs_info *fs_info = (fat_fs_info *)disktable[disk].parts[part].fsdata;
+    if (!fs_info || fs_info->bytes_per_sector != SECTOR_SIZE || fs_info->sectors_per_cluster == 0 || fs_info->sectors_per_cluster > 128 || fs_info->sector_count == 0) {
+        diagnostics_log("FAT32 read: filesystem metadata is unavailable or invalid.");
+        return 0;
+    }
+    if (fp->pointer >= fp->size)
+        return 0;
+    if (bytes > fp->size - fp->pointer)
+        bytes = fp->size - fp->pointer;
+    FAT_entry entry;
+    char filename[256];
+    if (find_fat_entry(&entry, filename, fp) != 0) {
+        diagnostics_log("FAT32 read: file entry lookup failed.");
+        return 0;
+    }
+    if (bytes == 0 || entry.size == 0)
+        return 0;
+    u32 cluster = ((u32)entry.cluster_high << 16) | entry.cluster_low;
+    u32 bytes_per_cluster = (u32)fs_info->bytes_per_sector * fs_info->sectors_per_cluster;
+    u32 max_clusters = fs_info->sector_count / fs_info->sectors_per_cluster;
+    if (cluster < 2 || cluster >= max_clusters + 2 || bytes_per_cluster == 0) {
+        diagnostics_log("FAT32 read: starting cluster is invalid.");
+        return 0;
+    }
+    u32 skipped = fp->pointer / bytes_per_cluster;
+    for (u32 i = 0; i < skipped; ++i) {
+        u32 next = 0;
+        if (!fat32_next_cluster(disktable[disk].parts[part].loc, fs_info, cluster, disk, &next))
+            return 0;
+        if (next < 2 || next == 0x0FFFFFF7 || next >= 0x0FFFFFF8 || next >= max_clusters + 2) {
+            diagnostics_log("FAT32 read: cluster chain ended before the requested file offset.");
+            return 0;
+        }
+        cluster = next;
+    }
+    u8 *buffer = malloc(bytes_per_cluster);
+    if (!buffer) {
+        diagnostics_log("FAT32 read: cluster buffer allocation failed.");
+        return 0;
+    }
+    size_t copied = 0;
+    size_t offset = fp->pointer % bytes_per_cluster;
+    u64 partoffset = disktable[disk].parts[part].loc;
+    while (copied < bytes) {
+        if (cluster < 2 || cluster >= max_clusters + 2) {
+            free(buffer);
+            diagnostics_log("FAT32 read: cluster chain contains an invalid cluster.");
+            return 0;
+        }
+        u64 data_lba = partoffset + fs_info->data + (u64)cluster * fs_info->sectors_per_cluster;
+        if (!readsectorpio(data_lba, fs_info->sectors_per_cluster, buffer, disk)) {
+            free(buffer);
+            diagnostics_log("FAT32 read: data-cluster read failed.");
+            return 0;
+        }
+        size_t available = bytes_per_cluster - offset;
+        size_t take = bytes - copied;
+        if (take > available)
+            take = available;
+        memcpy((u8 *)ptr + copied, buffer + offset, take);
+        copied += take;
+        offset = 0;
+        if (copied < bytes) {
+            u32 next = 0;
+            if (!fat32_next_cluster(partoffset, fs_info, cluster, disk, &next)) {
+                free(buffer);
+                return 0;
+            }
+            if (next < 2 || next == 0x0FFFFFF7 || next >= 0x0FFFFFF8 || next >= max_clusters + 2) {
+                free(buffer);
+                diagnostics_log("FAT32 read: cluster chain ended before the requested data was read.");
+                return 0;
+            }
+            cluster = next;
+        }
+    }
+    free(buffer);
+    fp->pointer += copied;
+    return copied;
 }
 
-
-
 int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp) {
-	/* entry and name parameters are both outputs */
-
-	char volume = fp->volume;
-
-	unsigned int disk = volumes[volume].disk;
-	unsigned int part = volumes[volume].partition;
-	LBA partoffset = disktable[disk].parts[part].loc;
-	fat_fs_info *fs_info = (fat_fs_info *) disktable[disk].parts[part].fsdata;
-
-	unsigned int i, j, len = 0;
-
-	char charbuf[6];
-	unsigned int depth = 0;
-
-	u32 active_cluster = fs_info->root_cluster;
-	u32 *FAT_buffer = malloc(SECTOR_SIZE);
-	const u32 bytes_per_cluster = fs_info->bytes_per_sector * fs_info->sectors_per_cluster;
-	FAT_entry *buffer = malloc(bytes_per_cluster);
-
-	FAT_entry *current;
-
-	readsectorpio(partoffset + fs_info->fat + active_cluster / FEPS, 1, FAT_buffer, disk);
+    if (!entry || !filename || !fp || !fp->path || !volumes || !disktable || fp->volume >= LETTERS)
+        return 1;
+    unsigned int disk = volumes[fp->volume].disk;
+    unsigned int part = volumes[fp->volume].partition;
+    if (disk >= 4 || part >= 4)
+        return 1;
+    LBA partoffset = disktable[disk].parts[part].loc;
+    fat_fs_info *fs_info = (fat_fs_info *)disktable[disk].parts[part].fsdata;
+    if (!fs_info || fs_info->bytes_per_sector != SECTOR_SIZE || fs_info->sectors_per_cluster == 0 || fs_info->sectors_per_cluster > 128 || fs_info->sector_count == 0 || !fp->path[0])
+        return 1;
+    unsigned int i, j, len = 0;
+    char charbuf[6];
+    unsigned int depth = 0;
+    u32 active_cluster = fs_info->root_cluster;
+    u32 *FAT_buffer = malloc(SECTOR_SIZE);
+    const u32 bytes_per_cluster = fs_info->bytes_per_sector * fs_info->sectors_per_cluster;
+    FAT_entry *buffer = malloc(bytes_per_cluster);
+    if (!FAT_buffer || !buffer) {
+        free(FAT_buffer);
+        free(buffer);
+        diagnostics_log("FAT32 lookup: memory allocation failed.");
+        return 1;
+    }
+    FAT_entry *current;
+    int result = 2;
+    u32 traversed = 0;
+    u32 traversal_limit = fs_info->sector_count / fs_info->sectors_per_cluster + 1;
+    if (!readsectorpio(partoffset + fs_info->fat + active_cluster / FEPS, 1, FAT_buffer, disk)) {
+        diagnostics_log("FAT32 lookup: root FAT-sector read failed.");
+        result = 1;
+        goto cleanup;
+    }
 
 	do {
 inloop:
-		readsectorpio(partoffset + fs_info->data + active_cluster * fs_info->sectors_per_cluster, fs_info->sectors_per_cluster, buffer, disk);
+        if (++traversed > traversal_limit || active_cluster < 2 || active_cluster >= traversal_limit + 2) {
+            diagnostics_log("FAT32 lookup: directory chain exceeded its safe traversal limit.");
+            result = 1;
+            goto cleanup;
+        }
+        if (!readsectorpio(partoffset + fs_info->data + active_cluster * fs_info->sectors_per_cluster, fs_info->sectors_per_cluster, buffer, disk)) {
+            diagnostics_log("FAT32 lookup: directory data read failed.");
+            result = 1;
+            goto cleanup;
+        }
 inloop2:
 		current = buffer;
 
@@ -189,8 +261,12 @@ inloop2:
 					++i;
 
 					if (i >= bytes_per_cluster / sizeof(FAT_entry)) {
-						readsectorpio(partoffset + fs_info->fat + FAT_buffer[active_cluster % FEPS] / FEPS, fs_info->sectors_per_cluster, FAT_buffer, disk);
-						active_cluster = FAT_buffer[active_cluster % FEPS];
+                    if (!readsectorpio(partoffset + fs_info->fat + FAT_buffer[active_cluster % FEPS] / FEPS, 1, FAT_buffer, disk)) {
+                        diagnostics_log("FAT32 lookup: FAT-sector read failed while scanning a directory.");
+                        result = 1;
+                        goto cleanup;
+                    }
+                    active_cluster = FAT_buffer[active_cluster % FEPS] & 0x0FFFFFFF;
 						goto inloop2;
 					}
 				}
@@ -205,26 +281,47 @@ inloop2:
 			}
 
 			if (!strcmp(filename, fp->path[depth])) {
-				active_cluster =  current->cluster_high << 16 | current->cluster_low;
-				memcpy(entry, current, sizeof(FAT_entry));
-				if (!(current->attr & 0x10)) return 0;
-				++depth;
-				goto inloop;
-			}
+                active_cluster = ((u32)current->cluster_high << 16) | current->cluster_low;
+                memcpy(entry, current, sizeof(FAT_entry));
+                if (!(current->attr & 0x10)) {
+                    result = 0;
+                    goto cleanup;
+                }
+                ++depth;
+                if (!fp->path[depth]) {
+                    result = 2;
+                    goto cleanup;
+                }
+                goto inloop;
+            }
 			++current;
 		}
-		readsectorpio(partoffset + fs_info->fat + FAT_buffer[active_cluster % FEPS] / FEPS, fs_info->sectors_per_cluster, FAT_buffer, disk);
-		active_cluster = FAT_buffer[active_cluster % FEPS];
+        if (!readsectorpio(partoffset + fs_info->fat + FAT_buffer[active_cluster % FEPS] / FEPS, 1, FAT_buffer, disk)) {
+            diagnostics_log("FAT32 lookup: FAT-sector read failed while advancing a directory chain.");
+            result = 1;
+            goto cleanup;
+        }
+        active_cluster = FAT_buffer[active_cluster % FEPS] & 0x0FFFFFFF;
 	} while ((active_cluster & 0x0FFFFFFF) < 0x0FFFFFF0);
 
-	return 2;
+    result = 2;
+cleanup:
+    free(FAT_buffer);
+    free(buffer);
+    return result;
 }
 
-unsigned long long fat_filesize(FILE *fp) {
-	FAT_entry entry;
-	char filename[256];
-	find_fat_entry(&entry, filename, fp);
-	return (fp->size = entry.size);
+bool fat_filesize(FILE *fp, unsigned long long *size) {
+    if (!fp || !size)
+        return false;
+    FAT_entry entry;
+    char filename[256];
+    if (find_fat_entry(&entry, filename, fp) != 0) {
+        diagnostics_log("FAT32 file-size lookup failed.");
+        return false;
+    }
+    *size = entry.size;
+    return true;
 }
 
 int fat_detect(unsigned int disk) {
@@ -478,18 +575,21 @@ static bool fat_name_equal(const char *input, const u8 *name, const u8 *ext) {
     return input[i] == '\0' && target[i] == '\0';
 }
 
-static u16 fat16_next_cluster(u32 fat_lba, u16 cluster, unsigned int disk) {
+static bool fat16_next_cluster(u32 fat_lba, u16 cluster, unsigned int disk, u16 *next) {
     u8 sector[512];
-
+    if (!next || disk >= 4 || cluster < 2) {
+        diagnostics_log("FAT16: invalid cluster-chain lookup request.");
+        return false;
+    }
     u32 offset = (u32)cluster * 2;
     u32 lba = fat_lba + offset / 512;
     u32 pos = offset % 512;
-
-    if (!disk_read_sector(lba, sector, disk))
-        return 0xFFFF;
-
-    return (u16)sector[pos] |
-           ((u16)sector[pos + 1] << 8);
+    if (!disk_read_sector(lba, sector, disk)) {
+        diagnostics_log("FAT16: FAT-sector read failed while following a cluster chain.");
+        return false;
+    }
+    *next = (u16)sector[pos] | ((u16)sector[pos + 1] << 8);
+    return true;
 }
 
 static bool fat16_find_in_dir(
@@ -575,11 +675,11 @@ static bool fat16_find_in_dir(
             }
         }
 
-        u16 next = fat16_next_cluster(fat_lba, cluster, disk);
+        u16 next;
+        if (!fat16_next_cluster(fat_lba, cluster, disk, &next))
+            return false;
 
-        if (next == 0xFFFF ||
-            next == 0xFFF7 ||
-            next < 2)
+        if (next == 0xFFF7 || next < 2 || next >= 0xFFF8)
             return false;
 
         cluster = next;
@@ -742,22 +842,14 @@ static bool fat16_write_fat_entry_copy(
            verify[pos + 1] == (u8)(value >> 8);
 }
 
-static void fat16_clear_cluster(
-    u32 fat_lba,
-    u32 sectors_per_fat,
-    u8 fat_count,
-    u16 cluster,
-    unsigned int disk
-) {
+static bool fat16_clear_cluster(u32 fat_lba, u32 sectors_per_fat, u8 fat_count, u16 cluster, unsigned int disk) {
     for (u32 copy = 0; copy < fat_count; ++copy) {
-        fat16_write_fat_entry_copy(
-            fat_lba + copy * sectors_per_fat,
-            sectors_per_fat,
-            cluster,
-            0,
-            disk
-        );
+        if (!fat16_write_fat_entry_copy(fat_lba + copy * sectors_per_fat, sectors_per_fat, cluster, 0, disk)) {
+            diagnostics_log("FAT16: failed to release a cluster in every FAT copy.");
+            return false;
+        }
     }
+    return true;
 }
 
 int fat16_write_empty_file(
@@ -1863,20 +1955,17 @@ int fat16_replace_file(
          step < max_cluster;
          ++step) {
 
-        u16 next =
-            fat16_next_cluster(
-                fat_lba,
-                old_current,
-                disk
-            );
-
-        fat16_clear_cluster(
-            fat_lba,
-            sectors_per_fat,
-            fat_count,
-            old_current,
-            disk
-        );
+        u16 next;
+        if (!fat16_next_cluster(fat_lba, old_current, disk, &next)) {
+            free(new_clusters);
+            diagnostics_log("FAT16 replace: old cluster chain could not be read during cleanup.");
+            return FAT16_WRITE_DELETE_CLEANUP_ERROR;
+        }
+        if (!fat16_clear_cluster(fat_lba, sectors_per_fat, fat_count, old_current, disk)) {
+            free(new_clusters);
+            diagnostics_log("FAT16 replace: old cluster cleanup failed after committing the new file.");
+            return FAT16_WRITE_DELETE_CLEANUP_ERROR;
+        }
 
         if (next < 2 ||
             next == 0xFFF7 ||
@@ -1911,7 +2000,7 @@ rollback:
 }
 
 int fat16_delete_file(const char name[11]) {
-    diagnostics_log("rm: FAT16 delete routine entered.");
+    diagnostics_log("remove: FAT16 delete routine entered.");
 
     if (!name || !disktable || !volumes ||
         disktable[0].parts[0].fs != fat16)
@@ -2004,7 +2093,7 @@ int fat16_delete_file(const char name[11]) {
     if (max_cluster < 2)
         return FAT16_WRITE_BAD_FS;
 
-    diagnostics_log("rm: scanning FAT16 root directory.");
+    diagnostics_log("remove: scanning FAT16 root directory.");
 
     bool found = false;
     bool end_of_directory = false;
@@ -2061,7 +2150,7 @@ int fat16_delete_file(const char name[11]) {
     if (dir_entry[11] & 0x10)
         return FAT16_WRITE_NOT_FILE;
 
-    diagnostics_log("rm: file located; validating FAT chain.");
+    diagnostics_log("remove: file located; validating FAT chain.");
 
     u16 first_cluster =
         (u16)dir_entry[26] | ((u16)dir_entry[27] << 8);
@@ -2125,7 +2214,7 @@ int fat16_delete_file(const char name[11]) {
         }
     }
 
-    diagnostics_log("rm: FAT chain validated; rechecking directory entry.");
+    diagnostics_log("remove: FAT chain validated; rechecking directory entry.");
 
     if (!disk_read_sector(dir_lba, sector, disk))
         return FAT16_WRITE_IO_ERROR;
@@ -2157,7 +2246,7 @@ int fat16_delete_file(const char name[11]) {
         current_size != file_size)
         return FAT16_WRITE_NOT_FOUND;
 
-    diagnostics_log("rm: marking directory entry deleted.");
+    diagnostics_log("remove: marking directory entry deleted.");
     sector[dir_off] = 0xE5;
 
     if (!disk_write_sector(dir_lba, sector, disk))
@@ -2169,8 +2258,8 @@ int fat16_delete_file(const char name[11]) {
     if (verify[dir_off] != 0xE5)
         return FAT16_WRITE_IO_ERROR;
 
-    diagnostics_log("rm: directory entry deletion verified.");
-    diagnostics_log("rm: releasing file clusters.");
+    diagnostics_log("remove: directory entry deletion verified.");
+    diagnostics_log("remove: releasing file clusters.");
 
     /*
      * Pass two: read the next link before clearing the current
@@ -2208,7 +2297,7 @@ int fat16_delete_file(const char name[11]) {
         current = next;
     }
 
-    diagnostics_log("rm: deletion completed.");
+    diagnostics_log("remove: deletion completed.");
     return FAT16_WRITE_OK;
 }
 
@@ -2411,8 +2500,9 @@ int fat16_dir_read(DIR *dir) {
                     state->root_sector,
                     sector,
                     disk)) {
-
+                dir->reserved = 1;
                 state->done = true;
+                diagnostics_log("FAT16 directory: root-sector read failed.");
                 return 0;
             }
 
@@ -2421,7 +2511,9 @@ int fat16_dir_read(DIR *dir) {
             if (state->cluster < 2 ||
                 state->cluster >= 0xFFF8) {
 
+                dir->reserved = 1;
                 state->done = true;
+                diagnostics_log("FAT16 directory: current cluster value is invalid.");
                 return 0;
             }
 
@@ -2435,8 +2527,9 @@ int fat16_dir_read(DIR *dir) {
                     lba,
                     sector,
                     disk)) {
-
+                dir->reserved = 1;
                 state->done = true;
+                diagnostics_log("FAT16 directory: data-sector read failed.");
                 return 0;
             }
         }
@@ -2535,17 +2628,14 @@ int fat16_dir_read(DIR *dir) {
             if (state->cluster_sector >=
                 state->sectors_per_cluster) {
 
-                u16 next =
-                    fat16_next_cluster(
-                        state->fat_lba,
-                        state->cluster,
-                        disk
-                    );
-
-                if (next < 2 ||
-                    next == 0xFFF7 ||
-                    next >= 0xFFF8) {
-
+                u16 next;
+                if (!fat16_next_cluster(state->fat_lba, state->cluster, disk, &next)) {
+                    dir->reserved = 1;
+                    state->done = true;
+                    diagnostics_log("FAT16 directory: failed to read the next cluster.");
+                    return 0;
+                }
+                if (next < 2 || next == 0xFFF7 || next >= 0xFFF8) {
                     state->done = true;
                     return 0;
                 }
@@ -2652,15 +2742,16 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
         fp->pointer % bytes_per_cluster;
 
     for (u32 i = 0; i < skipped_clusters; ++i) {
-        cluster =
-            fat16_next_cluster(
-                fat_lba,
-                cluster,
-                disk
-            );
-
-        if (cluster < 2 || cluster >= 0xFFF8)
+        u16 next;
+        if (!fat16_next_cluster(fat_lba, cluster, disk, &next)) {
+            diagnostics_log("FAT16 read: failed to read the next cluster.");
             return 0;
+        }
+        if (next < 2 || next == 0xFFF7 || next >= 0xFFF8) {
+            diagnostics_log("FAT16 read: cluster chain ended before the requested offset.");
+            return 0;
+        }
+        cluster = next;
     }
 
     u8 sector[512];
@@ -2715,16 +2806,16 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
         if (remaining == 0)
             break;
 
-        cluster =
-            fat16_next_cluster(
-                fat_lba,
-                cluster,
-                disk
-            );
-
-        if (cluster < 2 || cluster >= 0xFFF8)
-            break;
-
+        u16 next;
+        if (!fat16_next_cluster(fat_lba, cluster, disk, &next)) {
+            diagnostics_log("FAT16 read: failed to read the next cluster.");
+            return 0;
+        }
+        if (next < 2 || next == 0xFFF7 || next >= 0xFFF8) {
+            diagnostics_log("FAT16 read: cluster chain ended before the file contents were fully read.");
+            return 0;
+        }
+        cluster = next;
         offset = 0;
     }
 
@@ -2925,14 +3016,16 @@ int fat_cat(unsigned int disk, const char *filename) {
         if (remaining == 0)
             break;
 
-        cluster =
-            fat16_next_cluster(
-                fat_lba,
-                cluster,
-                disk);
-
-        if (cluster == 0xFFFF)
+        u16 next;
+        if (!fat16_next_cluster(fat_lba, cluster, disk, &next)) {
+            diagnostics_log("FAT16 file display: cluster-chain read failed.");
             return 0;
+        }
+        if (next < 2 || next == 0xFFF7 || next >= 0xFFF8) {
+            diagnostics_log("FAT16 file display: cluster chain ended before the full file was read.");
+            return 0;
+        }
+        cluster = next;
     }
 
     terminal_write("\n");

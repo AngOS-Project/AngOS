@@ -164,12 +164,12 @@ typedef struct {
     bool done;
 } fat16_dir_state_t;
 
-void fat_setup(unsigned int disk, unsigned int part);
+bool fat_setup(unsigned int disk, unsigned int part);
 
 size_t fat_read(void *ptr, size_t bytes, FILE *fp);
 size_t fat16_read(void *ptr, size_t bytes, FILE *fp);
 
-unsigned long long fat_filesize(FILE *fp);
+bool fat_filesize(FILE *fp, unsigned long long *size);
 
 int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp);
 int fat_detect(unsigned int disk);

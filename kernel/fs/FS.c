@@ -129,8 +129,8 @@ main_1:
         }
 
         case fat32:
-            fp->size =
-                fat_filesize(fp);
+            if (!fat_filesize(fp, &fp->size))
+                goto open_error;
             break;
 
         default:
