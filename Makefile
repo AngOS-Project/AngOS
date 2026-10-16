@@ -89,11 +89,15 @@ deploy: all
 	cp build/AngOS.elf qemu/AngOS.elf
 
 run: deploy
+	@rm -rf build/qemu-fat-root
+	@mkdir -p build/qemu-fat-root/EFI/BOOT
+	cp build/AngOS.efi build/qemu-fat-root/EFI/BOOT/BOOTX64.EFI
+	cp build/AngOS.elf build/qemu-fat-root/AngOS.elf
 	/mingw64/bin/qemu-system-x86_64.exe \
 		-serial file:angos-serial.log \
 		-drive if=pflash,format=raw,readonly=on,file=/mingw64/share/qemu/edk2-x86_64-code.fd \
 		-drive if=pflash,format=raw,file=qemu/UEFI_VARS.fd \
-		-drive format=raw,file=fat:rw:qemu \
+		-drive format=raw,file=fat:rw:build/qemu-fat-root \
 		-m 512M \
 		-no-reboot \
 		-d int,cpu_reset \
