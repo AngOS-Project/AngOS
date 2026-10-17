@@ -50,6 +50,18 @@ static void wt_field_hex(const char *label, u64 value) {
     wt_putc('\n');
 }
 
+static void wt_dump_control_registers(void) {
+    u64 cr0;
+    u64 cr3;
+    u64 cr4;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    wt_field_hex("CR0", cr0);
+    wt_field_hex("CR3", cr3);
+    wt_field_hex("CR4", cr4);
+}
+
 #define WT_HISTORY_CAPACITY 32
 #define WT_HISTORY_TEXT 96
 static char wt_history[WT_HISTORY_CAPACITY][WT_HISTORY_TEXT];
@@ -152,6 +164,8 @@ void diagnostics_panic(
         wt_write("Register frame unavailable.\n");
     }
 
+    wt_dump_control_registers();
+
     if (has_error_code)
         wt_field_hex("Error code", error_code);
 
@@ -179,6 +193,19 @@ void diagnostics_panic(
         if (error_code & 16)
             wt_write(", instruction fetch");
 
+        wt_putc('\n');
+    }
+
+    if ((vector == 0x0A || vector == 0x0B || vector == 0x0C || vector == 0x0D) && has_error_code) {
+        wt_write("Selector fault: ");
+        wt_write((error_code & 1) ? "external event, " : "internal event, ");
+        if (error_code & 2)
+            wt_write("IDT entry index ");
+        else if (error_code & 4)
+            wt_write("LDT selector index ");
+        else
+            wt_write("GDT selector index ");
+        wt_hex64((error_code >> 3) & 0x1FFF);
         wt_putc('\n');
     }
 
