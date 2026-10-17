@@ -18,6 +18,7 @@ typedef long long fpos_t;
 typedef struct FILE {
     u8 used;
     char **path;
+    u32 path_count;
     size_t pointer;
     u8 volume;
     unsigned long long size;

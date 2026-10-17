@@ -12,12 +12,38 @@ FILE *files = file_table;
 
 static DIR dir_table[MAX_OPEN_DIRS];
 
+static int fs_file_slot_status(const FILE *fp) {
+    if (!fp || !files)
+        return 1;
+    u64 address = (u64)fp;
+    u64 base = (u64)files;
+    u64 offset;
+    u64 table_size = (u64)sizeof(FILE) * MAX_OPEN_FILES;
+    if (address < base)
+        return 1;
+    offset = address - base;
+    if (offset >= table_size)
+        return 1;
+    if (offset % sizeof(FILE) != 0)
+        return 2;
+    return 0;
+}
+
+static bool fs_file_is_open(const FILE *fp) {
+    if (fs_file_slot_status(fp) != 0)
+        return false;
+    return fp->used != 0 && fp->path != 0 && fp->path_count != 0;
+}
+
 FILE *fopen(char *path, u8 flags) {
     void *oldpath = path;
     unsigned int i, j = 0;
     FILE *fp = files;
 
     (void)flags;
+
+    if (!path)
+        return 0;
 
     unsigned int dirs;
 
@@ -101,6 +127,7 @@ main_1:
 
     fp->used = 1;
     fp->path = fpath;
+    fp->path_count = dirs;
     fp->pointer = 0;
     fp->volume = volume;
     fp->size = 0;
@@ -141,6 +168,10 @@ main_1:
 
 open_error:
     fp->used = 0;
+    fp->path = 0;
+    fp->path_count = 0;
+    fp->pointer = 0;
+    fp->size = 0;
 
 error:
     for (i = 0; i < dirs; ++i) {
@@ -154,36 +185,36 @@ error:
 }
 
 int aligncheck(FILE *fp) {
-    if (fp < files ||
-        fp >= files + MAX_OPEN_FILES)
+    if (!fp || !files)
         return 1;
-
-    if ((unsigned long long)fp %
-            sizeof(FILE) !=
-        (unsigned long long)files %
-            sizeof(FILE))
+    u64 address = (u64)fp;
+    u64 base = (u64)files;
+    u64 table_size = (u64)sizeof(FILE) * MAX_OPEN_FILES;
+    if (address < base)
+        return 1;
+    u64 offset = address - base;
+    if (offset >= table_size)
+        return 1;
+    if (offset % sizeof(FILE) != 0)
         return 2;
-
     return 0;
 }
 
 int fclose(FILE *fp) {
-    if (aligncheck(fp))
+    if (!fs_file_is_open(fp))
         return 1;
 
     fp->used = 0;
-
-    char **ptr = fp->path;
-
-    while (*ptr != NULL)
-        free(*ptr++);
-
+    for (u32 i = 0; i < fp->path_count; ++i) {
+        if (fp->path[i])
+            free(fp->path[i]);
+    }
     free(fp->path);
-
-    fp->path = NULL;
+    fp->path = 0;
+    fp->path_count = 0;
     fp->pointer = 0;
+    fp->volume = 0;
     fp->size = 0;
-
     return 0;
 }
 
@@ -192,7 +223,7 @@ size_t fread(
     size_t bytes,
     FILE *fp
 ) {
-    if (!ptr || !fp)
+    if (!ptr || !fs_file_is_open(fp) || !disktable || !volumes || fp->volume >= LETTERS)
         return 0;
 
     if (bytes == 0)
@@ -241,8 +272,10 @@ int fseek(
     long long offset,
     fpos_t position
 ) {
-    if (!fp)
+    if (!fs_file_is_open(fp))
         return -1;
+    if (fp->pointer > fp->size)
+        return -2;
 
     switch (position) {
 
@@ -255,30 +288,29 @@ int fseek(
             fp->pointer = offset;
             break;
 
-        case SEEK_CUR: {
-            long long next =
-                (long long)fp->pointer +
-                offset;
-
-            if (next < 0 ||
-                (unsigned long long)next >
-                fp->size)
-                return -2;
-
-            fp->pointer = next;
+        case SEEK_CUR:
+            if (offset < 0) {
+                u64 distance = (u64)(-(offset + 1)) + 1;
+                if (distance > fp->pointer)
+                    return -2;
+                fp->pointer -= distance;
+            } else {
+                u64 distance = (u64)offset;
+                if (distance > fp->size - fp->pointer)
+                    return -2;
+                fp->pointer += distance;
+            }
             break;
-        }
 
         case SEEK_END:
             if (offset > 0)
                 return -2;
-
-            if ((unsigned long long)(-offset) >
-                fp->size)
-                return -2;
-
-            fp->pointer =
-                fp->size + offset;
+            {
+                u64 distance = (u64)(-(offset + 1)) + 1;
+                if (distance > fp->size)
+                    return -2;
+                fp->pointer = fp->size - distance;
+            }
             break;
 
         default:
@@ -289,14 +321,14 @@ int fseek(
 }
 
 void rewind(FILE *fp) {
-    if (aligncheck(fp))
+    if (!fs_file_is_open(fp))
         return;
 
     fp->pointer = 0;
 }
 
 unsigned long long fsize(FILE *fp) {
-    if (aligncheck(fp))
+    if (!fs_file_is_open(fp))
         return 0;
 
     return fp->size;
