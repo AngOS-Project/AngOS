@@ -12,6 +12,26 @@ FILE *files = file_table;
 
 static DIR dir_table[MAX_OPEN_DIRS];
 
+static int fs_dir_slot_status(const DIR *dir) {
+    if (!dir)
+        return 1;
+    u64 address = (u64)dir;
+    u64 base = (u64)dir_table;
+    u64 table_size = (u64)sizeof(DIR) * MAX_OPEN_DIRS;
+    if (address < base)
+        return 1;
+    u64 offset = address - base;
+    if (offset >= table_size)
+        return 1;
+    if (offset % sizeof(DIR) != 0)
+        return 2;
+    return 0;
+}
+
+static bool fs_dir_is_open(const DIR *dir) {
+    return fs_dir_slot_status(dir) == 0 && dir->used != 0 && dir->volume < LETTERS;
+}
+
 static int fs_file_slot_status(const FILE *fp) {
     if (!fp || !files)
         return 1;
@@ -335,7 +355,7 @@ unsigned long long fsize(FILE *fp) {
 }
 
 DIR *opendir(char *path) {
-    if (!path)
+    if (!path || !disktable || !volumes)
         return 0;
 
     if (path[0] != '|' ||
@@ -344,48 +364,34 @@ DIR *opendir(char *path) {
         path[2] != '/')
         return 0;
 
-    u8 volume =
-        (u8)(path[1] - 'A');
+    u8 volume = (u8)(path[1] - 'A');
+    if (volume >= LETTERS)
+        return 0;
 
-    for (u32 i = 0;
-         i < MAX_OPEN_DIRS;
-         ++i) {
+    unsigned int disk = volumes[volume].disk;
+    unsigned int part = volumes[volume].partition;
+    if (disk >= 4 || part >= 4)
+        return 0;
 
+    for (u32 i = 0; i < MAX_OPEN_DIRS; ++i) {
         if (dir_table[i].used)
             continue;
 
-        DIR *dir =
-            &dir_table[i];
-
+        DIR *dir = &dir_table[i];
         memset(dir, 0, sizeof(DIR));
-
         dir->used = 1;
         dir->volume = volume;
-
-        unsigned int disk =
-            volumes[volume].disk;
-
-        unsigned int part =
-            volumes[volume].partition;
-
-        dir->fs =
-            (u8)disktable[disk]
-                .parts[part]
-                .fs;
+        dir->fs = (u8)disktable[disk].parts[part].fs;
 
         if (dir->fs == fat16) {
-            if (!fat16_dir_open(
-                    dir,
-                    path)) {
-
-                dir->used = 0;
+            if (!fat16_dir_open(dir, path)) {
+                memset(dir, 0, sizeof(DIR));
                 return 0;
             }
-
             return dir;
         }
 
-        dir->used = 0;
+        memset(dir, 0, sizeof(DIR));
         return 0;
     }
 
@@ -393,32 +399,23 @@ DIR *opendir(char *path) {
 }
 
 dirent *readdir(DIR *dir) {
-    if (!dir ||
-        dir < dir_table ||
-        dir >= dir_table + MAX_OPEN_DIRS ||
-        !dir->used)
+    if (!fs_dir_is_open(dir))
         return 0;
 
     switch (dir->fs) {
-
         case fat16:
             if (fat16_dir_read(dir))
                 return &dir->entry;
             return 0;
-
         default:
             return 0;
     }
 }
 
 int closedir(DIR *dir) {
-    if (!dir ||
-        dir < dir_table ||
-        dir >= dir_table + MAX_OPEN_DIRS ||
-        !dir->used)
+    if (!fs_dir_is_open(dir))
         return 1;
 
-    dir->used = 0;
-
+    memset(dir, 0, sizeof(DIR));
     return 0;
 }
