@@ -65,11 +65,18 @@ FILE *fopen(char *path, u8 flags) {
     if (!path)
         return 0;
 
-    unsigned int dirs;
+    unsigned int dirs = 0;
+    u32 path_length = 0;
 
-    for (dirs = 0; *path; ++path) {
-        if (*path == '/')
+    while (path[path_length]) {
+        if (path_length >= FILENAME_LENGTH - 1)
+            return 0;
+        if (path[path_length] == '/') {
             ++dirs;
+            if (dirs >= 16)
+                return 0;
+        }
+        ++path_length;
     }
 
     if (dirs == 0)
