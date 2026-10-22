@@ -365,7 +365,21 @@ DIR *opendir(char *path) {
     if (!path || !disktable || !volumes)
         return 0;
 
-    if (path[0] != '|' ||
+    u32 path_length = 0;
+    u32 separators = 0;
+    while (path[path_length]) {
+        if (path_length >= FILENAME_LENGTH - 1)
+            return 0;
+        if (path[path_length] == '/') {
+            ++separators;
+            if (separators >= 16)
+                return 0;
+        }
+        ++path_length;
+    }
+
+    if (path_length < 3 ||
+        path[0] != '|' ||
         path[1] < 'A' ||
         path[1] > 'Z' ||
         path[2] != '/')
