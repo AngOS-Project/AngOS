@@ -650,6 +650,7 @@ static bool fat16_find_in_dir(
     u32 data_lba,
     u8 sectors_per_cluster,
     u32 fat_lba,
+    u32 cluster_limit,
     bool root,
     u16 dir_cluster,
     const char *name,
@@ -691,8 +692,12 @@ static bool fat16_find_in_dir(
     }
 
     u16 cluster = dir_cluster;
+    u32 traversed = 0;
+    if (cluster_limit == 0 || cluster < 2 || cluster >= 0xFFF0 || (u32)cluster - 2 >= cluster_limit)
+        return false;
 
-    while (cluster >= 2 && cluster < 0xFFF8) {
+    while (cluster >= 2 && cluster < 0xFFF0 && (u32)cluster - 2 < cluster_limit && traversed < cluster_limit) {
+        ++traversed;
         u32 cluster_lba =
             data_lba +
             ((u32)cluster - 2) * sectors_per_cluster;
@@ -730,7 +735,7 @@ static bool fat16_find_in_dir(
         if (!fat16_next_cluster(fat_lba, cluster, disk, &next))
             return false;
 
-        if (next == 0xFFF7 || next < 2 || next >= 0xFFF8)
+        if (next < 2 || next >= 0xFFF0 || (u32)next - 2 >= cluster_limit)
             return false;
 
         cluster = next;
@@ -740,10 +745,13 @@ static bool fat16_find_in_dir(
 }
 
 int fat16_find_file_entry(const FILE *fp, FAT_entry *entry) {
-    if (!fp || !entry || !fp->path)
+    if (!fp || !entry || !fp->path || !volumes || !disktable || fp->volume >= LETTERS)
         return 0;
 
     unsigned int disk = volumes[fp->volume].disk;
+    unsigned int part = volumes[fp->volume].partition;
+    if (disk >= 4 || part >= 4 || disktable[disk].parts[part].fs != fat16)
+        return 0;
 
     if (fat_detect(disk) != 16)
         return 0;
@@ -783,25 +791,44 @@ int fat16_find_file_entry(const FILE *fp, FAT_entry *entry) {
         (u16)boot[22] |
         ((u16)boot[23] << 8);
 
+    u32 total_sectors =
+        (u32)boot[19] |
+        ((u32)boot[20] << 8);
+
+    if (total_sectors == 0) {
+        total_sectors =
+            (u32)boot[32] |
+            ((u32)boot[33] << 8) |
+            ((u32)boot[34] << 16) |
+            ((u32)boot[35] << 24);
+    }
+
+    u64 root_sectors_wide = ((u64)root_entries * 32 + 511) / 512;
+    u64 metadata_sectors = (u64)reserved_sectors + (u64)fat_count * sectors_per_fat + root_sectors_wide;
+    u64 partition_end = (u64)partition_lba + total_sectors;
+
     if (bytes_per_sector != 512 ||
         sectors_per_cluster == 0 ||
+        sectors_per_cluster > 128 ||
+        (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 ||
         reserved_sectors == 0 ||
         fat_count == 0 ||
         root_entries == 0 ||
-        sectors_per_fat == 0)
+        sectors_per_fat == 0 ||
+        total_sectors == 0 ||
+        metadata_sectors >= total_sectors ||
+        partition_end > 0x100000000ULL ||
+        (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
         return 0;
 
-    u32 root_sectors =
-        ((u32)root_entries * 32 + 511) / 512;
+    u32 root_sectors = (u32)root_sectors_wide;
+    u32 cluster_count = (total_sectors - (u32)metadata_sectors) / sectors_per_cluster;
+    if (cluster_count == 0 || cluster_count > 0xFFEE || (u64)cluster_count + 2 > (u64)sectors_per_fat * 256)
+        return 0;
 
-    u32 fat_lba =
-        partition_lba + reserved_sectors;
-
-    u32 root_lba =
-        fat_lba + ((u32)fat_count * sectors_per_fat);
-
-    u32 data_lba =
-        root_lba + root_sectors;
+    u32 fat_lba = partition_lba + reserved_sectors;
+    u32 root_lba = fat_lba + (u32)fat_count * sectors_per_fat;
+    u32 data_lba = root_lba + root_sectors;
 
     u32 part_count = 0;
 
@@ -827,6 +854,7 @@ int fat16_find_file_entry(const FILE *fp, FAT_entry *entry) {
                 data_lba,
                 sectors_per_cluster,
                 fat_lba,
+                cluster_count,
                 root,
                 dir_cluster,
                 fp->path[i],
