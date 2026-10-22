@@ -2381,11 +2381,12 @@ int fat16_delete_file(const char name[11]) {
 }
 
 int fat16_dir_open(DIR *dir, const char *path) {
-    if (!dir || !path)
+    if (!dir || !path || !volumes || !disktable || dir->volume >= LETTERS)
         return 0;
 
-    unsigned int disk =
-        volumes[dir->volume].disk;
+    unsigned int disk = volumes[dir->volume].disk;
+    if (disk >= 4)
+        return 0;
 
     if (fat_detect(disk) != 16)
         return 0;
@@ -2425,26 +2426,44 @@ int fat16_dir_open(DIR *dir, const char *path) {
         (u16)boot[22] |
         ((u16)boot[23] << 8);
 
+    u32 total_sectors =
+        (u16)boot[19] |
+        ((u32)boot[20] << 8);
+
+    if (total_sectors == 0) {
+        total_sectors =
+            (u32)boot[32] |
+            ((u32)boot[33] << 8) |
+            ((u32)boot[34] << 16) |
+            ((u32)boot[35] << 24);
+    }
+
+    u64 root_sectors_wide = ((u64)root_entries * 32 + 511) / 512;
+    u64 metadata_sectors = (u64)reserved_sectors + (u64)fat_count * sectors_per_fat + root_sectors_wide;
+    u64 partition_end = (u64)partition_lba + total_sectors;
+
     if (bytes_per_sector != 512 ||
         sectors_per_cluster == 0 ||
+        sectors_per_cluster > 128 ||
+        (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 ||
         reserved_sectors == 0 ||
         fat_count == 0 ||
         root_entries == 0 ||
-        sectors_per_fat == 0)
+        sectors_per_fat == 0 ||
+        total_sectors == 0 ||
+        metadata_sectors >= total_sectors ||
+        partition_end > 0x100000000ULL ||
+        (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
         return 0;
 
-    u32 root_sectors =
-        ((u32)root_entries * 32 + 511) / 512;
+    u32 root_sectors = (u32)root_sectors_wide;
+    u32 cluster_count = (total_sectors - (u32)metadata_sectors) / sectors_per_cluster;
+    if (cluster_count == 0 || cluster_count > 0xFFEE || (u64)cluster_count + 2 > (u64)sectors_per_fat * 256)
+        return 0;
 
-    u32 fat_lba =
-        partition_lba + reserved_sectors;
-
-    u32 root_lba =
-        fat_lba +
-        ((u32)fat_count * sectors_per_fat);
-
-    u32 data_lba =
-        root_lba + root_sectors;
+    u32 fat_lba = partition_lba + reserved_sectors;
+    u32 root_lba = fat_lba + (u32)fat_count * sectors_per_fat;
+    u32 data_lba = root_lba + root_sectors;
 
     fat16_dir_state_t *state =
         (fat16_dir_state_t *)dir->fsdata;
@@ -2524,6 +2543,7 @@ int fat16_dir_open(DIR *dir, const char *path) {
                 data_lba,
                 sectors_per_cluster,
                 fat_lba,
+                cluster_count,
                 root,
                 dir_cluster,
                 parts[i],
@@ -2912,7 +2932,7 @@ int fat_cat(unsigned int disk, const char *filename) {
     u8 boot[512];
     u8 sector[512];
 
-    if (!filename || !*filename)
+    if (!filename || !*filename || !disktable || disk >= 4)
         return 0;
 
     if (fat_detect(disk) != 16)
@@ -2950,25 +2970,44 @@ int fat_cat(unsigned int disk, const char *filename) {
         (u16)boot[22] |
         ((u16)boot[23] << 8);
 
+    u32 total_sectors =
+        (u16)boot[19] |
+        ((u32)boot[20] << 8);
+
+    if (total_sectors == 0) {
+        total_sectors =
+            (u32)boot[32] |
+            ((u32)boot[33] << 8) |
+            ((u32)boot[34] << 16) |
+            ((u32)boot[35] << 24);
+    }
+
+    u64 root_sectors_wide = ((u64)root_entries * 32 + 511) / 512;
+    u64 metadata_sectors = (u64)reserved_sectors + (u64)fat_count * sectors_per_fat + root_sectors_wide;
+    u64 partition_end = (u64)partition_lba + total_sectors;
+
     if (bytes_per_sector != 512 ||
         sectors_per_cluster == 0 ||
+        sectors_per_cluster > 128 ||
+        (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 ||
         reserved_sectors == 0 ||
         fat_count == 0 ||
         root_entries == 0 ||
-        sectors_per_fat == 0)
+        sectors_per_fat == 0 ||
+        total_sectors == 0 ||
+        metadata_sectors >= total_sectors ||
+        partition_end > 0x100000000ULL ||
+        (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
         return 0;
 
-    u32 root_sectors =
-        ((u32)root_entries * 32 + 511) / 512;
+    u32 root_sectors = (u32)root_sectors_wide;
+    u32 cluster_count = (total_sectors - (u32)metadata_sectors) / sectors_per_cluster;
+    if (cluster_count == 0 || cluster_count > 0xFFEE || (u64)cluster_count + 2 > (u64)sectors_per_fat * 256)
+        return 0;
 
-    u32 fat_lba =
-        partition_lba + reserved_sectors;
-
-    u32 root_lba =
-        fat_lba + ((u32)fat_count * sectors_per_fat);
-
-    u32 data_lba =
-        root_lba + root_sectors;
+    u32 fat_lba = partition_lba + reserved_sectors;
+    u32 root_lba = fat_lba + (u32)fat_count * sectors_per_fat;
+    u32 data_lba = root_lba + root_sectors;
 
     char path[256];
     u32 length = 0;
@@ -3015,6 +3054,7 @@ int fat_cat(unsigned int disk, const char *filename) {
                 data_lba,
                 sectors_per_cluster,
                 fat_lba,
+                cluster_count,
                 root,
                 dir_cluster,
                 parts[i],
