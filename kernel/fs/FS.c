@@ -159,11 +159,17 @@ main_1:
     fp->volume = volume;
     fp->size = 0;
 
+    if (!disktable || !volumes)
+        goto open_error;
+
     unsigned int disk =
         volumes[volume].disk;
 
     unsigned int part =
         volumes[volume].partition;
+
+    if (disk >= 4 || part >= 4)
+        goto open_error;
 
     switch (
         disktable[disk]
@@ -269,6 +275,9 @@ size_t fread(
 
     unsigned int part =
         volumes[fp->volume].partition;
+
+    if (disk >= 4 || part >= 4)
+        return 0;
 
     switch (
         disktable[disk]
