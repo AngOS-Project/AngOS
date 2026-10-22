@@ -160,13 +160,15 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
         if (cluster < 2 || cluster >= max_clusters + 2) {
             free(buffer);
             diagnostics_log("FAT32 read: cluster chain contains an invalid cluster.");
-            return 0;
+            fp->pointer += copied;
+            return copied;
         }
         u64 data_lba = partoffset + fs_info->data + (u64)cluster * fs_info->sectors_per_cluster;
         if (!readsectorpio(data_lba, fs_info->sectors_per_cluster, buffer, disk)) {
             free(buffer);
             diagnostics_log("FAT32 read: data-cluster read failed.");
-            return 0;
+            fp->pointer += copied;
+            return copied;
         }
         size_t available = bytes_per_cluster - offset;
         size_t take = bytes - copied;
@@ -179,12 +181,14 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
             u32 next = 0;
             if (!fat32_next_cluster(partoffset, fs_info, cluster, disk, &next)) {
                 free(buffer);
-                return 0;
+                fp->pointer += copied;
+                return copied;
             }
             if (next < 2 || next == 0x0FFFFFF7 || next >= 0x0FFFFFF8 || next >= max_clusters + 2) {
                 free(buffer);
                 diagnostics_log("FAT32 read: cluster chain ended before the requested data was read.");
-                return 0;
+                fp->pointer += copied;
+                return copied;
             }
             cluster = next;
         }
