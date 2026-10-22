@@ -111,16 +111,28 @@ bool fat_setup(unsigned int disk, unsigned int part) {
 
 static bool fat32_next_cluster(LBA partoffset, const fat_fs_info *fs_info, u32 cluster, unsigned int disk, u32 *next_cluster) {
     u32 fat_buffer[SECTOR_SIZE / sizeof(u32)];
-    if (!fs_info || !next_cluster || cluster < 2 || !fs_info->sectors_per_cluster)
+    if (!fs_info || !next_cluster || disk >= 4 || fs_info->bytes_per_sector != SECTOR_SIZE || fs_info->sectors_per_cluster == 0 || fs_info->sectors_per_cluster > 128 || fs_info->sector_count == 0 || fs_info->sectors_per_fat == 0 || cluster < 2)
         return false;
+    u32 data_start = fs_info->data + 2 * fs_info->sectors_per_cluster;
+    if (data_start >= fs_info->sector_count)
+        return false;
+    u32 max_clusters = (fs_info->sector_count - data_start) / fs_info->sectors_per_cluster;
+    if (max_clusters == 0 || cluster - 2 >= max_clusters || cluster / FEPS >= fs_info->sectors_per_fat) {
+        diagnostics_log("FAT32: cluster-chain lookup is outside the FAT or data region.");
+        return false;
+    }
     if (!readsectorpio(partoffset + fs_info->fat + cluster / FEPS, 1, fat_buffer, disk)) {
         diagnostics_log("FAT32: FAT-sector read failed while following a cluster chain.");
         return false;
     }
-    *next_cluster = fat_buffer[cluster % FEPS] & 0x0FFFFFFF;
+    u32 next = fat_buffer[cluster % FEPS] & 0x0FFFFFFF;
+    if (next < 2 || next >= 0x0FFFFFF0 || next - 2 >= max_clusters) {
+        diagnostics_log("FAT32: cluster chain points outside the valid data region.");
+        return false;
+    }
+    *next_cluster = next;
     return true;
 }
-
 size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
     if (!ptr || !fp || !fp->path || !volumes || !disktable || fp->volume >= LETTERS || bytes == 0)
         return 0;
