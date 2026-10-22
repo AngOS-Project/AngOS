@@ -2772,8 +2772,10 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
             if (!disk_read_sector(
                     cluster_lba + s,
                     sector,
-                    disk))
+                    disk)) {
+                fp->pointer += copied;
                 return copied;
+            }
 
             u32 sector_offset =
                 cluster_offset >= 512
@@ -2809,11 +2811,13 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
         u16 next;
         if (!fat16_next_cluster(fat_lba, cluster, disk, &next)) {
             diagnostics_log("FAT16 read: failed to read the next cluster.");
-            return 0;
+            fp->pointer += copied;
+            return copied;
         }
         if (next < 2 || next == 0xFFF7 || next >= 0xFFF8) {
             diagnostics_log("FAT16 read: cluster chain ended before the file contents were fully read.");
-            return 0;
+            fp->pointer += copied;
+            return copied;
         }
         cluster = next;
         offset = 0;
