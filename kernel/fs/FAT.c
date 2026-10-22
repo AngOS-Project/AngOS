@@ -30,7 +30,7 @@ bool fat_setup(unsigned int disk, unsigned int part) {
         diagnostics_log("FAT32 setup: boot-sector read failed.");
         return false;
     }
-    if (BPB.bytes_per_sector != SECTOR_SIZE || BPB.sectors_per_cluster == 0 || BPB.reserved_sectors == 0 || BPB.FAT_count == 0 || BPB.sectors_per_FAT == 0 || BPB.root_cluster < 2) {
+    if (BPB.bytes_per_sector != SECTOR_SIZE || BPB.sectors_per_cluster == 0 || BPB.sectors_per_cluster > 128 || (BPB.sectors_per_cluster & (BPB.sectors_per_cluster - 1)) != 0 || BPB.reserved_sectors == 0 || BPB.FAT_count == 0 || BPB.sectors_per_FAT == 0 || BPB.root_cluster < 2) {
         diagnostics_log("FAT32 setup: invalid boot-sector metadata.");
         return false;
     }
@@ -43,15 +43,26 @@ bool fat_setup(unsigned int disk, unsigned int part) {
     fs_info.root_entries = BPB.root_entries;
     fs_info.root_sectors = (fs_info.root_entries * 32 + fs_info.bytes_per_sector - 1) / fs_info.bytes_per_sector;
     fs_info.fat_count = BPB.FAT_count;
-    fs_info.fat = (BPB.reserved_sectors * fs_info.bytes_per_sector) / SECTOR_SIZE;
-    fs_info.data = fs_info.fat + (fs_info.fat_count * ((fs_info.sectors_per_fat * fs_info.bytes_per_sector) / SECTOR_SIZE)) - 2;
     fs_info.sector_count = BPB.sector_count_small ? BPB.sector_count_small : BPB.sector_count_large;
     if (fs_info.sector_count == 0) {
         diagnostics_log("FAT32 setup: volume reports no sectors.");
         return false;
     }
-    u32 max_clusters = fs_info.sector_count / fs_info.sectors_per_cluster;
-    if (fs_info.root_cluster >= max_clusters + 2) {
+    u64 fat_start = BPB.reserved_sectors;
+    u64 fat_length = (u64)fs_info.fat_count * fs_info.sectors_per_fat;
+    u64 data_start = fat_start + fat_length;
+    if (data_start < (u64)2 * fs_info.sectors_per_cluster || data_start >= fs_info.sector_count || data_start > 0xFFFFFFFFULL) {
+        diagnostics_log("FAT32 setup: FAT or data region exceeds the volume bounds.");
+        return false;
+    }
+    fs_info.fat = (u32)fat_start;
+    fs_info.data = (u32)(data_start - (u64)2 * fs_info.sectors_per_cluster);
+    u32 max_clusters = (fs_info.sector_count - (u32)data_start) / fs_info.sectors_per_cluster;
+    if (max_clusters == 0 || (u64)max_clusters + 2 > (u64)fs_info.sectors_per_fat * FEPS) {
+        diagnostics_log("FAT32 setup: cluster count exceeds the FAT or data region capacity.");
+        return false;
+    }
+    if (fs_info.root_cluster < 2 || fs_info.root_cluster - 2 >= max_clusters) {
         diagnostics_log("FAT32 setup: root cluster is outside the volume.");
         return false;
     }
@@ -68,12 +79,16 @@ bool fat_setup(unsigned int disk, unsigned int part) {
             return false;
         }
         u32 next = FAT_buffer[current_cluster % FEPS] & 0x0FFFFFFF;
+        if (fs_info.root_clusters == 0xFFFF) {
+            diagnostics_log("FAT32 setup: root directory cluster count exceeds the metadata limit.");
+            return false;
+        }
         ++fs_info.root_clusters;
         if (next >= 0x0FFFFFF8) {
             reached_end = true;
             break;
         }
-        if (next < 2 || next == 0x0FFFFFF7 || next >= max_clusters + 2) {
+        if (next < 2 || next >= 0x0FFFFFF0 || next >= max_clusters + 2) {
             diagnostics_log("FAT32 setup: root cluster chain is corrupt.");
             return false;
         }
@@ -132,8 +147,17 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
         return 0;
     u32 cluster = ((u32)entry.cluster_high << 16) | entry.cluster_low;
     u32 bytes_per_cluster = (u32)fs_info->bytes_per_sector * fs_info->sectors_per_cluster;
-    u32 max_clusters = fs_info->sector_count / fs_info->sectors_per_cluster;
-    if (cluster < 2 || cluster >= max_clusters + 2 || bytes_per_cluster == 0) {
+    u32 data_start = fs_info->data + 2 * fs_info->sectors_per_cluster;
+    if (data_start >= fs_info->sector_count) {
+        diagnostics_log("FAT32 read: data region is outside the volume bounds.");
+        return 0;
+    }
+    u32 max_clusters = (fs_info->sector_count - data_start) / fs_info->sectors_per_cluster;
+    if (max_clusters == 0 || (u64)max_clusters + 2 > (u64)fs_info->sectors_per_fat * FEPS) {
+        diagnostics_log("FAT32 read: cluster count exceeds the FAT or data region capacity.");
+        return 0;
+    }
+    if (cluster < 2 || cluster - 2 >= max_clusters || bytes_per_cluster == 0) {
         diagnostics_log("FAT32 read: starting cluster is invalid.");
         return 0;
     }
@@ -142,7 +166,7 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
         u32 next = 0;
         if (!fat32_next_cluster(disktable[disk].parts[part].loc, fs_info, cluster, disk, &next))
             return 0;
-        if (next < 2 || next == 0x0FFFFFF7 || next >= 0x0FFFFFF8 || next >= max_clusters + 2) {
+        if (next < 2 || next == 0x0FFFFFF7 || next >= 0x0FFFFFF8 || next - 2 >= max_clusters) {
             diagnostics_log("FAT32 read: cluster chain ended before the requested file offset.");
             return 0;
         }
@@ -157,7 +181,7 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
     size_t offset = fp->pointer % bytes_per_cluster;
     u64 partoffset = disktable[disk].parts[part].loc;
     while (copied < bytes) {
-        if (cluster < 2 || cluster >= max_clusters + 2) {
+        if (cluster < 2 || cluster - 2 >= max_clusters) {
             free(buffer);
             diagnostics_log("FAT32 read: cluster chain contains an invalid cluster.");
             fp->pointer += copied;
@@ -184,7 +208,7 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
                 fp->pointer += copied;
                 return copied;
             }
-            if (next < 2 || next == 0x0FFFFFF7 || next >= 0x0FFFFFF8 || next >= max_clusters + 2) {
+            if (next < 2 || next == 0x0FFFFFF7 || next >= 0x0FFFFFF8 || next - 2 >= max_clusters) {
                 free(buffer);
                 diagnostics_log("FAT32 read: cluster chain ended before the requested data was read.");
                 fp->pointer += copied;
@@ -225,7 +249,18 @@ int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp) {
     FAT_entry *current;
     int result = 2;
     u32 traversed = 0;
-    u32 traversal_limit = fs_info->sector_count / fs_info->sectors_per_cluster + 1;
+    u32 data_start = fs_info->data + 2 * fs_info->sectors_per_cluster;
+    if (data_start >= fs_info->sector_count) {
+        diagnostics_log("FAT32 lookup: data region is outside the volume bounds.");
+        result = 1;
+        goto cleanup;
+    }
+    u32 traversal_limit = (fs_info->sector_count - data_start) / fs_info->sectors_per_cluster;
+    if (traversal_limit == 0 || (u64)traversal_limit + 2 > (u64)fs_info->sectors_per_fat * FEPS) {
+        diagnostics_log("FAT32 lookup: cluster count exceeds the FAT or data region capacity.");
+        result = 1;
+        goto cleanup;
+    }
     if (!readsectorpio(partoffset + fs_info->fat + active_cluster / FEPS, 1, FAT_buffer, disk)) {
         diagnostics_log("FAT32 lookup: root FAT-sector read failed.");
         result = 1;
@@ -234,7 +269,7 @@ int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp) {
 
 	do {
 inloop:
-        if (++traversed > traversal_limit || active_cluster < 2 || active_cluster >= traversal_limit + 2) {
+        if (++traversed > traversal_limit || active_cluster < 2 || active_cluster - 2 >= traversal_limit) {
             diagnostics_log("FAT32 lookup: directory chain exceeded its safe traversal limit.");
             result = 1;
             goto cleanup;
