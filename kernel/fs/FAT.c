@@ -2421,6 +2421,14 @@ int fat16_dir_open(DIR *dir, const char *path) {
     if (!dir || !path || !volumes || !disktable || dir->volume >= LETTERS)
         return 0;
 
+    u32 path_length = 0;
+    while (path[path_length]) {
+        if (path_length >= FILENAME_LENGTH - 1)
+            return 0;
+        ++path_length;
+    }
+    if (path_length < 3 || path[0] != '|' || path[1] != (char)('A' + dir->volume) || path[2] != '/')
+        return 0;
     unsigned int disk = volumes[dir->volume].disk;
     if (disk >= 4)
         return 0;
@@ -2566,6 +2574,9 @@ int fat16_dir_open(DIR *dir, const char *path) {
         if (*cursor)
             *cursor++ = '\0';
     }
+
+if (*cursor)
+        return 0;
 
     if (part_count == 0)
         return 0;
