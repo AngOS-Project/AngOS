@@ -2780,7 +2780,7 @@ int fat16_dir_read(DIR *dir) {
 }
 
 size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
-    if (!ptr || !fp || !fp->path)
+    if (!ptr || !fp || !fp->path || !volumes || !disktable || fp->volume >= LETTERS)
         return 0;
 
     if (fp->pointer >= fp->size)
@@ -2795,6 +2795,9 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
         return 0;
 
     unsigned int disk = volumes[fp->volume].disk;
+    unsigned int partition = volumes[fp->volume].partition;
+    if (disk >= 4 || partition >= 4 || disktable[disk].parts[partition].fs != fat16)
+        return 0;
 
     u8 mbr[512];
     u8 boot[512];
@@ -2831,16 +2834,40 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
         (u16)boot[22] |
         ((u16)boot[23] << 8);
 
+    u32 total_sectors =
+        (u32)boot[19] |
+        ((u32)boot[20] << 8);
+
+    if (total_sectors == 0) {
+        total_sectors =
+            (u32)boot[32] |
+            ((u32)boot[33] << 8) |
+            ((u32)boot[34] << 16) |
+            ((u32)boot[35] << 24);
+    }
+
+    u64 root_sectors_wide = ((u64)root_entries * 32 + 511) / 512;
+    u64 metadata_sectors = (u64)reserved_sectors + (u64)fat_count * sectors_per_fat + root_sectors_wide;
+    u64 partition_end = (u64)partition_lba + total_sectors;
+
     if (bytes_per_sector != 512 ||
         sectors_per_cluster == 0 ||
+        sectors_per_cluster > 128 ||
+        (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 ||
         reserved_sectors == 0 ||
         fat_count == 0 ||
         root_entries == 0 ||
-        sectors_per_fat == 0)
+        sectors_per_fat == 0 ||
+        total_sectors == 0 ||
+        metadata_sectors >= total_sectors ||
+        partition_end > 0x100000000ULL ||
+        (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
         return 0;
 
-    u32 root_sectors =
-        ((u32)root_entries * 32 + 511) / 512;
+    u32 root_sectors = (u32)root_sectors_wide;
+    u32 cluster_count = (total_sectors - (u32)metadata_sectors) / sectors_per_cluster;
+    if (cluster_count == 0 || cluster_count > 0xFFEE || (u64)cluster_count + 2 > (u64)sectors_per_fat * 256)
+        return 0;
 
     u32 fat_lba =
         partition_lba + reserved_sectors;
@@ -2859,7 +2886,7 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
     u16 cluster =
         (u16)entry.cluster_low;
 
-    if (cluster < 2)
+    if (cluster < 2 || cluster >= 0xFFF0 || (u32)cluster - 2 >= cluster_count)
         return 0;
 
     u32 bytes_per_cluster =
@@ -2877,8 +2904,8 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
             diagnostics_log("FAT16 read: failed to read the next cluster.");
             return 0;
         }
-        if (next < 2 || next == 0xFFF7 || next >= 0xFFF8) {
-            diagnostics_log("FAT16 read: cluster chain ended before the requested offset.");
+        if (next < 2 || next >= 0xFFF0 || (u32)next - 2 >= cluster_count) {
+            diagnostics_log("FAT16 read: cluster chain is invalid before the requested offset.");
             return 0;
         }
         cluster = next;
@@ -2889,6 +2916,11 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
     size_t copied = 0;
 
     while (remaining > 0) {
+        if (cluster < 2 || cluster >= 0xFFF0 || (u32)cluster - 2 >= cluster_count) {
+            diagnostics_log("FAT16 read: cluster chain is outside the valid data region.");
+            fp->pointer += copied;
+            return copied;
+        }
         u32 cluster_lba =
             data_lba +
             ((u32)cluster - 2) * sectors_per_cluster;
@@ -2944,8 +2976,8 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
             fp->pointer += copied;
             return copied;
         }
-        if (next < 2 || next == 0xFFF7 || next >= 0xFFF8) {
-            diagnostics_log("FAT16 read: cluster chain ended before the file contents were fully read.");
+        if (next < 2 || next >= 0xFFF0 || (u32)next - 2 >= cluster_count) {
+            diagnostics_log("FAT16 read: cluster chain is invalid before the file contents were fully read.");
             fp->pointer += copied;
             return copied;
         }
