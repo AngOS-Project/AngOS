@@ -298,16 +298,33 @@ inloop2:
 		for (i = 0; i < bytes_per_cluster / sizeof(FAT_entry); ++i) {
 			if (current->attr == LFN) {
 				while (current->attr == LFN) {
-					wcatomba((u8*) charbuf, ((LFN_entry*) current)->first, 5);
-					memcpy(&filename[(((((LFN_entry*) current)->order) & 0x1F) - 1) * 13], charbuf, 5);
-
-					wcatomba((u8*) charbuf, ((LFN_entry*) current)->middle, 6);
-					memcpy(&filename[(((((LFN_entry*) current)->order) & 0x1F) - 1) * 13 + 5], charbuf, 6);
-
-					wcatomba((u8*) charbuf, ((LFN_entry*) current)->last, 2);
-					memcpy(&filename[(((((LFN_entry*) current)->order) & 0x1F) - 1) * 13 + 11], charbuf, 2);
-
-					len += 13;
+					u32 order_index = ((LFN_entry *)current)->order & 0x1F;
+                    if (order_index == 0 || order_index > 20) {
+                        diagnostics_log("FAT32 lookup: invalid long-filename entry order.");
+                        result = 1;
+                        goto cleanup;
+                    }
+                    u32 filename_offset = (order_index - 1) * 13;
+                    u32 room = sizeof(filename) - 1 - filename_offset;
+                    u32 count;
+                    wcatomba((u8 *)charbuf, ((LFN_entry *)current)->first, 5);
+                    count = room < 5 ? room : 5;
+                    if (count)
+                        memcpy(filename + filename_offset, charbuf, count);
+                    room -= count;
+                    wcatomba((u8 *)charbuf, ((LFN_entry *)current)->middle, 6);
+                    count = room < 6 ? room : 6;
+                    if (count)
+                        memcpy(filename + filename_offset + 5, charbuf, count);
+                    room -= count;
+                    wcatomba((u8 *)charbuf, ((LFN_entry *)current)->last, 2);
+                    count = room < 2 ? room : 2;
+                    if (count)
+                        memcpy(filename + filename_offset + 11, charbuf, count);
+                    if (len <= sizeof(filename) - 14)
+                        len += 13;
+                    else
+                        len = sizeof(filename) - 1;
 					++current;
 					++i;
 
