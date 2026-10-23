@@ -2826,6 +2826,9 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
         return 0;
 
     unsigned int disk = volumes[fp->volume].disk;
+
+    if (disk >= 4)
+        return 0;
     unsigned int partition = volumes[fp->volume].partition;
     if (disk >= 4 || partition >= 4 || disktable[disk].parts[partition].fs != fat16)
         return 0;
@@ -2913,7 +2916,10 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
 
     if (!fat16_find_file_entry(fp, &entry))
         return 0;
-
+    if ((unsigned long long)entry.size != fp->size || entry.cluster_high != 0) {
+        diagnostics_log("FAT16 read: opened file metadata no longer matches the directory entry.");
+        return 0;
+    }
     u16 cluster =
         (u16)entry.cluster_low;
 
