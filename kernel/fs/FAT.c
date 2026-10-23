@@ -413,6 +413,8 @@ bool fat_filesize(FILE *fp, unsigned long long *size) {
 }
 
 int fat_detect(unsigned int disk) {
+    if (disk >= 4)
+        return 0;
     u8 mbr[512];
     u8 boot[512];
 
@@ -460,6 +462,13 @@ int fat_detect(unsigned int disk) {
         return 0;
 
     if (fat_count == 0)
+        return 0;
+
+    u32 volume_sectors = (u32)boot[19] | ((u32)boot[20] << 8);
+    if (volume_sectors == 0)
+        volume_sectors = (u32)boot[32] | ((u32)boot[33] << 8) | ((u32)boot[34] << 16) | ((u32)boot[35] << 24);
+    u64 partition_end = (u64)partition_lba + volume_sectors;
+    if (sectors_per_cluster > 128 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 || volume_sectors == 0 || partition_end > 0x100000000ULL || (disktable && disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
         return 0;
 
     if (partition_type == 0x01)
