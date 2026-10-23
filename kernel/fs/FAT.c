@@ -362,7 +362,14 @@ inloop2:
                     goto cleanup;
                 }
                 if (!strcmp(filename, fp->path[depth])) {
-                active_cluster = ((u32)current->cluster_high << 16) | current->cluster_low;
+                u32 matched_cluster = ((u32)current->cluster_high << 16) | current->cluster_low;
+                bool matched_directory = (current->attr & 0x10) != 0;
+                if ((matched_directory || current->size != 0) && (matched_cluster < 2 || matched_cluster - 2 >= traversal_limit)) {
+                    diagnostics_log("FAT32 lookup: matched entry points outside the valid cluster range.");
+                    result = 1;
+                    goto cleanup;
+                }
+                active_cluster = matched_cluster;
                 memcpy(entry, current, sizeof(FAT_entry));
                 if (!(current->attr & 0x10)) {
                     result = 0;
