@@ -2607,7 +2607,7 @@ if (*cursor)
             (u16)found[26] |
             ((u16)found[27] << 8);
 
-        if (dir_cluster < 2)
+        if (dir_cluster < 2 || (u32)dir_cluster - 2 >= cluster_count)
             return 0;
 
         root = false;
