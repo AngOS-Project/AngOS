@@ -151,6 +151,8 @@ typedef struct {
     u32 data_lba;
 
     u8 sectors_per_cluster;
+    u32 cluster_limit;
+    u32 clusters_seen;
 
     bool root;
 

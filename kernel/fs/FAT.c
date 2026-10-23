@@ -2492,6 +2492,8 @@ int fat16_dir_open(DIR *dir, const char *path) {
     state->fat_lba = fat_lba;
     state->data_lba = data_lba;
     state->sectors_per_cluster = sectors_per_cluster;
+    state->cluster_limit = cluster_count;
+    state->clusters_seen = 0;
 
     const char *p = path;
 
@@ -2582,6 +2584,7 @@ int fat16_dir_open(DIR *dir, const char *path) {
 
     state->root = false;
     state->cluster = dir_cluster;
+    state->clusters_seen = 1;
     state->cluster_sector = 0;
     state->entry_index = 0;
     state->done = false;
@@ -2590,14 +2593,17 @@ int fat16_dir_open(DIR *dir, const char *path) {
 }
 
 int fat16_dir_read(DIR *dir) {
-    if (!dir)
+    if (!dir || !volumes || !disktable || dir->volume >= LETTERS)
         return 0;
+
+    unsigned int disk = volumes[dir->volume].disk;
+    if (disk >= 4) {
+        dir->reserved = 1;
+        return 0;
+    }
 
     fat16_dir_state_t *state =
         (fat16_dir_state_t *)dir->fsdata;
-
-    unsigned int disk =
-        volumes[dir->volume].disk;
 
     u8 sector[512];
 
@@ -2625,11 +2631,13 @@ int fat16_dir_read(DIR *dir) {
         } else {
 
             if (state->cluster < 2 ||
-                state->cluster >= 0xFFF8) {
+                state->cluster >= 0xFFF0 ||
+                state->cluster_limit == 0 ||
+                (u32)state->cluster - 2 >= state->cluster_limit) {
 
                 dir->reserved = 1;
                 state->done = true;
-                diagnostics_log("FAT16 directory: current cluster value is invalid.");
+                diagnostics_log("FAT16 directory: current cluster is outside the volume bounds.");
                 return 0;
             }
 
@@ -2751,11 +2759,17 @@ int fat16_dir_read(DIR *dir) {
                     diagnostics_log("FAT16 directory: failed to read the next cluster.");
                     return 0;
                 }
-                if (next < 2 || next == 0xFFF7 || next >= 0xFFF8) {
+                if (next >= 0xFFF8) {
                     state->done = true;
                     return 0;
                 }
-
+                if (next < 2 || next >= 0xFFF0 || state->cluster_limit == 0 || (u32)next - 2 >= state->cluster_limit || state->clusters_seen >= state->cluster_limit) {
+                    dir->reserved = 1;
+                    state->done = true;
+                    diagnostics_log("FAT16 directory: cluster chain is corrupt or exceeds its traversal limit.");
+                    return 0;
+                }
+                ++state->clusters_seen;
                 state->cluster = next;
                 state->cluster_sector = 0;
             }
