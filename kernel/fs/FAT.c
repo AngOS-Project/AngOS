@@ -237,6 +237,14 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
 int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp) {
     if (!entry || !filename || !fp || !fp->path || !volumes || !disktable || fp->volume >= LETTERS)
         return 1;
+    if (fp->path_count == 0 || fp->path_count >= 16)
+        return 1;
+    for (u32 path_index = 0; path_index < fp->path_count; ++path_index) {
+        if (!fp->path[path_index])
+            return 1;
+    }
+    if (fp->path[fp->path_count])
+        return 1;
     unsigned int disk = volumes[fp->volume].disk;
     unsigned int part = volumes[fp->volume].partition;
     if (disk >= 4 || part >= 4)
@@ -348,7 +356,12 @@ inloop2:
 				filename[j + 4] = '\0';
 			}
 
-			if (!strcmp(filename, fp->path[depth])) {
+			if (depth >= fp->path_count || !fp->path[depth]) {
+                    diagnostics_log("FAT32 lookup: path depth exceeded its validated component count.");
+                    result = 1;
+                    goto cleanup;
+                }
+                if (!strcmp(filename, fp->path[depth])) {
                 active_cluster = ((u32)current->cluster_high << 16) | current->cluster_low;
                 memcpy(entry, current, sizeof(FAT_entry));
                 if (!(current->attr & 0x10)) {
