@@ -1385,6 +1385,8 @@ int fat16_replace_file(
 
     unsigned int disk = volumes[0].disk;
 
+    if (disk >= 4)
+        return FAT16_WRITE_BAD_FS;
     if (fat_detect(disk) != 16)
         return FAT16_WRITE_BAD_FS;
 
@@ -1439,6 +1441,9 @@ int fat16_replace_file(
             ((u32)boot[34] << 16) |
             ((u32)boot[35] << 24);
     }
+    u64 partition_end = (u64)partition_lba + total_sectors;
+    if (partition_lba == 0 || total_sectors == 0 || partition_end > 0x100000000ULL || (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
+        return FAT16_WRITE_BAD_FS;
 
     if (bytes_per_sector != 512 ||
         sectors_per_cluster == 0 ||
