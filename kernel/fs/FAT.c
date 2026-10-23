@@ -141,7 +141,7 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
     if (disk >= 4 || part >= 4)
         return 0;
     fat_fs_info *fs_info = (fat_fs_info *)disktable[disk].parts[part].fsdata;
-    if (!fs_info || fs_info->bytes_per_sector != SECTOR_SIZE || fs_info->sectors_per_cluster == 0 || fs_info->sectors_per_cluster > 128 || fs_info->sector_count == 0) {
+    if (!fs_info || fs_info->bytes_per_sector != SECTOR_SIZE || fs_info->sectors_per_cluster == 0 || fs_info->sectors_per_cluster > 128 || (fs_info->sectors_per_cluster & (fs_info->sectors_per_cluster - 1)) != 0 || fs_info->sectors_per_fat == 0 || fs_info->sector_count == 0) {
         diagnostics_log("FAT32 read: filesystem metadata is unavailable or invalid.");
         return 0;
     }
