@@ -281,11 +281,7 @@ int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp) {
         result = 1;
         goto cleanup;
     }
-    if (!readsectorpio(partoffset + fs_info->fat + active_cluster / FEPS, 1, FAT_buffer, disk)) {
-        diagnostics_log("FAT32 lookup: root FAT-sector read failed.");
-        result = 1;
-        goto cleanup;
-    }
+
 
 	do {
 inloop:
@@ -338,14 +334,25 @@ inloop2:
 					++i;
 
 					if (i >= bytes_per_cluster / sizeof(FAT_entry)) {
-                    if (!readsectorpio(partoffset + fs_info->fat + FAT_buffer[active_cluster % FEPS] / FEPS, 1, FAT_buffer, disk)) {
-                        diagnostics_log("FAT32 lookup: FAT-sector read failed while scanning a directory.");
-                        result = 1;
-                        goto cleanup;
+                        if (!readsectorpio(partoffset + fs_info->fat + active_cluster / FEPS, 1, FAT_buffer, disk)) {
+                            diagnostics_log("FAT32 lookup: FAT-sector read failed while scanning a directory.");
+                            result = 1;
+                            goto cleanup;
+                        }
+                        u32 next_cluster = FAT_buffer[active_cluster % FEPS] & 0x0FFFFFFF;
+                        if (next_cluster < 2 || next_cluster >= 0x0FFFFFF0 || next_cluster - 2 >= traversal_limit || ++traversed > traversal_limit) {
+                            diagnostics_log("FAT32 lookup: LFN continuation cluster is outside the volume bounds.");
+                            result = 1;
+                            goto cleanup;
+                        }
+                        active_cluster = next_cluster;
+                        if (!readsectorpio(partoffset + fs_info->data + (u64)active_cluster * fs_info->sectors_per_cluster, fs_info->sectors_per_cluster, buffer, disk)) {
+                            diagnostics_log("FAT32 lookup: LFN continuation cluster read failed.");
+                            result = 1;
+                            goto cleanup;
+                        }
+                        goto inloop2;
                     }
-                    active_cluster = FAT_buffer[active_cluster % FEPS] & 0x0FFFFFFF;
-						goto inloop2;
-					}
 				}
 				filename[len] = '\0';
 				len = 0;
@@ -381,17 +388,28 @@ inloop2:
                     result = 2;
                     goto cleanup;
                 }
+                traversed = 0;
                 goto inloop;
             }
 			++current;
 		}
-        if (!readsectorpio(partoffset + fs_info->fat + FAT_buffer[active_cluster % FEPS] / FEPS, 1, FAT_buffer, disk)) {
+        if (!readsectorpio(partoffset + fs_info->fat + active_cluster / FEPS, 1, FAT_buffer, disk)) {
             diagnostics_log("FAT32 lookup: FAT-sector read failed while advancing a directory chain.");
             result = 1;
             goto cleanup;
         }
-        active_cluster = FAT_buffer[active_cluster % FEPS] & 0x0FFFFFFF;
-	} while ((active_cluster & 0x0FFFFFFF) < 0x0FFFFFF0);
+        u32 next_cluster = FAT_buffer[active_cluster % FEPS] & 0x0FFFFFFF;
+        if (next_cluster >= 0x0FFFFFF8) {
+            result = 2;
+            goto cleanup;
+        }
+        if (next_cluster < 2 || next_cluster >= 0x0FFFFFF0 || next_cluster - 2 >= traversal_limit) {
+            diagnostics_log("FAT32 lookup: directory cluster link is outside the volume bounds.");
+            result = 1;
+            goto cleanup;
+        }
+        active_cluster = next_cluster;
+    } while (true);
 
     result = 2;
 cleanup:
