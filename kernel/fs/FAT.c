@@ -2981,8 +2981,18 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
     u32 bytes_per_cluster =
         (u32)bytes_per_sector * sectors_per_cluster;
 
+    u64 required_clusters = ((u64)entry.size + bytes_per_cluster - 1) / bytes_per_cluster;
+    if (required_clusters == 0 || required_clusters > cluster_count) {
+        diagnostics_log("FAT16 read: required file-cluster count exceeds the valid data region.");
+        return 0;
+    }
+
     u32 skipped_clusters =
         fp->pointer / bytes_per_cluster;
+    if ((u64)skipped_clusters >= required_clusters) {
+        diagnostics_log("FAT16 read: requested offset exceeds the file-cluster count.");
+        return 0;
+    }
 
     u32 offset =
         fp->pointer % bytes_per_cluster;
