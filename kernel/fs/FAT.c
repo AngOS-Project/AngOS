@@ -305,6 +305,7 @@ inloop2:
 		/* Under this, everything to right of '<' is the amount of fat entries in a cluster */
 		for (i = 0; i < bytes_per_cluster / sizeof(FAT_entry); ++i) {
 			if (current->attr == LFN) {
+                if (len == 0) memset(filename, 0, FILENAME_LENGTH);
 				while (current->attr == LFN) {
 					u32 order_index = ((LFN_entry *)current)->order & 0x1F;
                     if (order_index == 0 || order_index > 20) {
@@ -313,7 +314,7 @@ inloop2:
                         goto cleanup;
                     }
                     u32 filename_offset = (order_index - 1) * 13;
-                    u32 room = sizeof(filename) - 1 - filename_offset;
+                    u32 room = FILENAME_LENGTH - 1 - filename_offset;
                     u32 count;
                     wcatomba((u8 *)charbuf, ((LFN_entry *)current)->first, 5);
                     count = room < 5 ? room : 5;
@@ -329,10 +330,10 @@ inloop2:
                     count = room < 2 ? room : 2;
                     if (count)
                         memcpy(filename + filename_offset + 11, charbuf, count);
-                    if (len <= sizeof(filename) - 14)
+                    if (len <= FILENAME_LENGTH - 14)
                         len += 13;
                     else
-                        len = sizeof(filename) - 1;
+                        len = FILENAME_LENGTH - 1;
 					++current;
 					++i;
 
