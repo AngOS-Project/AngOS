@@ -155,6 +155,10 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
         diagnostics_log("FAT32 read: file entry lookup failed.");
         return 0;
     }
+    if ((unsigned long long)entry.size != fp->size) {
+        diagnostics_log("FAT32 read: opened file size no longer matches the directory entry.");
+        return 0;
+    }
     if (bytes == 0 || entry.size == 0)
         return 0;
     u32 cluster = ((u32)entry.cluster_high << 16) | entry.cluster_low;
@@ -167,6 +171,11 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
     u32 max_clusters = (fs_info->sector_count - data_start) / fs_info->sectors_per_cluster;
     if (max_clusters == 0 || (u64)max_clusters + 2 > (u64)fs_info->sectors_per_fat * FEPS) {
         diagnostics_log("FAT32 read: cluster count exceeds the FAT or data region capacity.");
+        return 0;
+    }
+    u64 required_clusters = ((u64)entry.size + bytes_per_cluster - 1) / bytes_per_cluster;
+    if (required_clusters == 0 || required_clusters > max_clusters) {
+        diagnostics_log("FAT32 read: required file-cluster count exceeds the valid data region.");
         return 0;
     }
     if (cluster < 2 || cluster - 2 >= max_clusters || bytes_per_cluster == 0) {
