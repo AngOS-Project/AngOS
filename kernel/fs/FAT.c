@@ -3016,6 +3016,36 @@ size_t fat16_read(void *ptr, size_t bytes, FILE *fp) {
         diagnostics_log("FAT16 read: required file-cluster count exceeds the valid data region.");
         return 0;
     }
+    u16 chain_cluster = cluster;
+    u8 chain_sector[SECTOR_SIZE];
+    for (u64 chain_index = 0; chain_index < required_clusters; ++chain_index) {
+        if (chain_cluster < 2 || chain_cluster >= 0xFFF0 || (u32)chain_cluster - 2 >= cluster_count) {
+            diagnostics_log("FAT16 read: file chain leaves the data region.");
+            return 0;
+        }
+        u32 fat_offset = (u32)chain_cluster * 2;
+        if (fat_offset + 1 >= (u32)sectors_per_fat * SECTOR_SIZE) {
+            diagnostics_log("FAT16 read: file chain references a cluster outside the FAT.");
+            return 0;
+        }
+        if (!disk_read_sector(fat_lba + fat_offset / SECTOR_SIZE, chain_sector, disk)) {
+            diagnostics_log("FAT16 read: failed to validate the file cluster chain.");
+            return 0;
+        }
+        u16 next_cluster = (u16)chain_sector[fat_offset % SECTOR_SIZE] | ((u16)chain_sector[fat_offset % SECTOR_SIZE + 1] << 8);
+        if (chain_index + 1 == required_clusters) {
+            if (next_cluster < 0xFFF8) {
+                diagnostics_log("FAT16 read: file cluster chain is longer than its recorded size or does not terminate.");
+                return 0;
+            }
+        } else {
+            if (next_cluster < 2 || next_cluster >= 0xFFF0 || (u32)next_cluster - 2 >= cluster_count) {
+                diagnostics_log("FAT16 read: file cluster chain ends before its recorded size.");
+                return 0;
+            }
+            chain_cluster = next_cluster;
+        }
+    }
 
     u32 skipped_clusters =
         fp->pointer / bytes_per_cluster;
