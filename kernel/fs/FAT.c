@@ -182,6 +182,36 @@ size_t fat_read(void *ptr, size_t bytes, FILE *fp) {
         diagnostics_log("FAT32 read: starting cluster is invalid.");
         return 0;
     }
+    u32 chain_cluster = cluster;
+    u32 chain_fat_buffer[SECTOR_SIZE / sizeof(u32)];
+    for (u64 chain_index = 0; chain_index < required_clusters; ++chain_index) {
+        if (chain_cluster < 2 || chain_cluster - 2 >= max_clusters) {
+            diagnostics_log("FAT32 read: file chain leaves the data region.");
+            return 0;
+        }
+        u64 fat_sector = (u64)chain_cluster / FEPS;
+        if (fat_sector >= fs_info->sectors_per_fat) {
+            diagnostics_log("FAT32 read: file chain references a cluster outside the FAT.");
+            return 0;
+        }
+        if (!readsectorpio(disktable[disk].parts[part].loc + fs_info->fat + fat_sector, 1, chain_fat_buffer, disk)) {
+            diagnostics_log("FAT32 read: failed to validate the file cluster chain.");
+            return 0;
+        }
+        u32 next_cluster = chain_fat_buffer[chain_cluster % FEPS] & 0x0FFFFFFF;
+        if (chain_index + 1 == required_clusters) {
+            if (next_cluster < 0x0FFFFFF8) {
+                diagnostics_log("FAT32 read: file cluster chain is longer than its recorded size or does not terminate.");
+                return 0;
+            }
+        } else {
+            if (next_cluster < 2 || next_cluster >= 0x0FFFFFF0 || next_cluster - 2 >= max_clusters) {
+                diagnostics_log("FAT32 read: file cluster chain ends before its recorded size.");
+                return 0;
+            }
+            chain_cluster = next_cluster;
+        }
+    }
     u32 skipped = fp->pointer / bytes_per_cluster;
     for (u32 i = 0; i < skipped; ++i) {
         u32 next = 0;
