@@ -1108,6 +1108,8 @@ int fat16_write_empty_file(
 
     if (bytes_per_sector != 512 ||
         sectors_per_cluster == 0 ||
+        sectors_per_cluster > 128 ||
+        (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 ||
         reserved_sectors == 0 ||
         fat_count == 0 ||
         root_entries == 0 ||
@@ -1514,6 +1516,8 @@ int fat16_replace_file(
 
     if (bytes_per_sector != 512 ||
         sectors_per_cluster == 0 ||
+        sectors_per_cluster > 128 ||
+        (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 ||
         reserved_sectors == 0 ||
         fat_count == 0 ||
         root_entries == 0 ||
@@ -2250,6 +2254,8 @@ int fat16_delete_file(const char name[11]) {
 
     if (bytes_per_sector != 512 ||
         sectors_per_cluster == 0 ||
+        sectors_per_cluster > 128 ||
+        (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 ||
         reserved_sectors == 0 ||
         fat_count == 0 ||
         root_entries == 0 ||
