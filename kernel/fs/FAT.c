@@ -279,7 +279,7 @@ int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp) {
     if (fp->path_count == 0 || fp->path_count >= 16)
         return 1;
     for (u32 path_index = 0; path_index < fp->path_count; ++path_index) {
-        if (!fp->path[path_index])
+        if (!fp->path[path_index] || !fp->path[path_index][0])
             return 1;
     }
     if (fp->path[fp->path_count])
@@ -290,173 +290,235 @@ int find_fat_entry(FAT_entry *entry, char filename[256], const FILE *fp) {
         return 1;
     LBA partoffset = disktable[disk].parts[part].loc;
     fat_fs_info *fs_info = (fat_fs_info *)disktable[disk].parts[part].fsdata;
-    if (!fs_info || fs_info->bytes_per_sector != SECTOR_SIZE || fs_info->sectors_per_cluster == 0 || fs_info->sectors_per_cluster > 128 || fs_info->sector_count == 0 || !fp->path[0])
+    if (!fs_info || fs_info->bytes_per_sector != SECTOR_SIZE || fs_info->sectors_per_cluster == 0 || fs_info->sectors_per_cluster > 128 || (fs_info->sectors_per_cluster & (fs_info->sectors_per_cluster - 1)) != 0 || fs_info->sectors_per_fat == 0 || fs_info->sector_count == 0)
         return 1;
-    unsigned int i, j, len = 0;
-    char charbuf[6];
-    unsigned int depth = 0;
-    u32 active_cluster = fs_info->root_cluster;
-    u32 *FAT_buffer = malloc(SECTOR_SIZE);
-    const u32 bytes_per_cluster = fs_info->bytes_per_sector * fs_info->sectors_per_cluster;
-    FAT_entry *buffer = malloc(bytes_per_cluster);
-    if (!FAT_buffer || !buffer) {
-        free(FAT_buffer);
-        free(buffer);
+    u64 data_start_wide = (u64)fs_info->data + (u64)2 * fs_info->sectors_per_cluster;
+    if (data_start_wide >= fs_info->sector_count || data_start_wide > 0xFFFFFFFFULL)
+        return 1;
+    u32 data_start = (u32)data_start_wide;
+    u32 traversal_limit = (fs_info->sector_count - data_start) / fs_info->sectors_per_cluster;
+    if (traversal_limit == 0 || (u64)traversal_limit + 2 > (u64)fs_info->sectors_per_fat * FEPS || fs_info->root_cluster < 2 || fs_info->root_cluster - 2 >= traversal_limit)
+        return 1;
+    u32 bytes_per_cluster = (u32)fs_info->bytes_per_sector * fs_info->sectors_per_cluster;
+    u8 *cluster_buffer = malloc(bytes_per_cluster);
+    u32 *fat_buffer = malloc(SECTOR_SIZE);
+    if (!cluster_buffer || !fat_buffer) {
+        free(cluster_buffer);
+        free(fat_buffer);
         diagnostics_log("FAT32 lookup: memory allocation failed.");
         return 1;
     }
-    FAT_entry *current;
     int result = 2;
-    u32 traversed = 0;
-    u32 data_start = fs_info->data + 2 * fs_info->sectors_per_cluster;
-    if (data_start >= fs_info->sector_count) {
-        diagnostics_log("FAT32 lookup: data region is outside the volume bounds.");
-        result = 1;
-        goto cleanup;
-    }
-    u32 traversal_limit = (fs_info->sector_count - data_start) / fs_info->sectors_per_cluster;
-    if (traversal_limit == 0 || (u64)traversal_limit + 2 > (u64)fs_info->sectors_per_fat * FEPS) {
-        diagnostics_log("FAT32 lookup: cluster count exceeds the FAT or data region capacity.");
-        result = 1;
-        goto cleanup;
-    }
-
-
-	do {
-inloop:
-        if (++traversed > traversal_limit || active_cluster < 2 || active_cluster - 2 >= traversal_limit) {
-            diagnostics_log("FAT32 lookup: directory chain exceeded its safe traversal limit.");
-            result = 1;
-            goto cleanup;
-        }
-        if (!readsectorpio(partoffset + fs_info->data + active_cluster * fs_info->sectors_per_cluster, fs_info->sectors_per_cluster, buffer, disk)) {
-            diagnostics_log("FAT32 lookup: directory data read failed.");
-            result = 1;
-            goto cleanup;
-        }
-inloop2:
-		current = buffer;
-
-		/* Under this, everything to right of '<' is the amount of fat entries in a cluster */
-		for (i = 0; i < bytes_per_cluster / sizeof(FAT_entry); ++i) {
-			if (current->attr == LFN) {
-                if (len == 0) memset(filename, 0, FILENAME_LENGTH);
-				while (current->attr == LFN) {
-					u32 order_index = ((LFN_entry *)current)->order & 0x1F;
-                    if (order_index == 0 || order_index > 20) {
-                        diagnostics_log("FAT32 lookup: invalid long-filename entry order.");
-                        result = 1;
+    u32 directory_cluster = fs_info->root_cluster;
+    for (u32 depth = 0; depth < fp->path_count; ++depth) {
+        u32 cluster = directory_cluster;
+        u32 traversed = 0;
+        bool component_found = false;
+        bool directory_ended = false;
+        bool chain_ended = false;
+        FAT_entry found_entry;
+        char lfn_name[FILENAME_LENGTH];
+        memset(lfn_name, 0, sizeof(lfn_name));
+        bool lfn_active = false;
+        bool lfn_valid = false;
+        u8 lfn_checksum = 0;
+        u32 expected_order = 0;
+        while (traversed < traversal_limit) {
+            if (cluster < 2 || cluster - 2 >= traversal_limit) {
+                diagnostics_log("FAT32 lookup: directory cluster is outside the valid data region.");
+                result = 1;
+                goto cleanup;
+            }
+            ++traversed;
+            u64 cluster_lba = (u64)partoffset + fs_info->data + (u64)cluster * fs_info->sectors_per_cluster;
+            if (!readsectorpio(cluster_lba, fs_info->sectors_per_cluster, cluster_buffer, disk)) {
+                diagnostics_log("FAT32 lookup: directory data read failed.");
+                result = 1;
+                goto cleanup;
+            }
+            FAT_entry *entries = (FAT_entry *)cluster_buffer;
+            u32 entries_in_cluster = bytes_per_cluster / sizeof(FAT_entry);
+            for (u32 i = 0; i < entries_in_cluster; ++i) {
+                FAT_entry *current = &entries[i];
+                u8 first = (u8)current->name[0];
+                if (first == 0x00) {
+                    directory_ended = true;
+                    break;
+                }
+                if (first == 0xE5) {
+                    memset(lfn_name, 0, sizeof(lfn_name));
+                    lfn_active = false;
+                    lfn_valid = false;
+                    expected_order = 0;
+                    continue;
+                }
+                if (current->attr == LFN) {
+                    LFN_entry *lfn = (LFN_entry *)current;
+                    u8 raw_order = lfn->order;
+                    u32 order = raw_order & 0x1F;
+                    bool begins = (raw_order & 0x40) != 0;
+                    if (begins) {
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        lfn_active = true;
+                        lfn_valid = true;
+                        lfn_checksum = lfn->checksum;
+                        expected_order = order;
+                    }
+                    if (!lfn_active)
+                        continue;
+                    if ((raw_order & 0xA0) != 0 || order == 0 || order > 20 || order != expected_order || lfn->checksum != lfn_checksum)
+                        lfn_valid = false;
+                    if (order == 0 || order > 20) {
+                        expected_order = 0;
+                        continue;
+                    }
+                    if (lfn_valid) {
+                        wchar units[13];
+                        memcpy(units, lfn->first, sizeof(lfn->first));
+                        memcpy(units + 5, lfn->middle, sizeof(lfn->middle));
+                        memcpy(units + 11, lfn->last, sizeof(lfn->last));
+                        u32 base = (order - 1) * 13;
+                        for (u32 unit = 0; unit < 13; ++unit) {
+                            u32 pos = base + unit;
+                            if (pos >= FILENAME_LENGTH - 1)
+                                break;
+                            if (units[unit] == 0 || units[unit] == 0xFFFF) {
+                                lfn_name[pos] = '\0';
+                                break;
+                            }
+                            lfn_name[pos] = units[unit] <= 0x7F ? (char)units[unit] : '?';
+                        }
+                    }
+                    if (expected_order > 0)
+                        --expected_order;
+                    else
+                        lfn_valid = false;
+                    continue;
+                }
+                if (current->attr & 0x08) {
+                    memset(lfn_name, 0, sizeof(lfn_name));
+                    lfn_active = false;
+                    lfn_valid = false;
+                    expected_order = 0;
+                    continue;
+                }
+                char short_name[13];
+                u32 name_length = 0;
+                for (u32 k = 0; k < 8 && current->name[k] != ' '; ++k) {
+                    u8 ch = (u8)current->name[k];
+                    short_name[name_length++] = ch == 0x05 && k == 0 ? (char)0xE5 : (char)ch;
+                }
+                u32 extension_length = 0;
+                for (u32 k = 0; k < 3 && current->extension[k] != ' '; ++k)
+                    ++extension_length;
+                if (extension_length != 0) {
+                    short_name[name_length++] = '.';
+                    for (u32 k = 0; k < extension_length; ++k)
+                        short_name[name_length++] = current->extension[k];
+                }
+                short_name[name_length] = '\0';
+                u8 short_checksum = 0;
+                const u8 *short_raw = (const u8 *)current;
+                for (u32 k = 0; k < 11; ++k)
+                    short_checksum = (u8)(((short_checksum & 1) << 7) + (short_checksum >> 1) + short_raw[k]);
+                bool use_lfn = lfn_active && lfn_valid && expected_order == 0 && lfn_checksum == short_checksum && lfn_name[0] != '\0';
+                const char *candidate = use_lfn ? lfn_name : short_name;
+                bool matches = true;
+                for (u32 char_index = 0; candidate[char_index] || fp->path[depth][char_index]; ++char_index) {
+                    char left = candidate[char_index];
+                    char right = fp->path[depth][char_index];
+                    if (left >= 'a' && left <= 'z')
+                        left = (char)(left - 'a' + 'A');
+                    if (right >= 'a' && right <= 'z')
+                        right = (char)(right - 'a' + 'A');
+                    if (left != right) {
+                        matches = false;
+                        break;
+                    }
+                }
+                char matched_name[FILENAME_LENGTH];
+                size_t copy_length = 0;
+                if (matches) {
+                    copy_length = 0;
+                    while (copy_length < FILENAME_LENGTH - 1 && candidate[copy_length])
+                        ++copy_length;
+                    if (copy_length >= FILENAME_LENGTH)
+                        copy_length = FILENAME_LENGTH - 1;
+                    memcpy(matched_name, candidate, copy_length);
+                    matched_name[copy_length] = '\0';
+                    memcpy(&found_entry, current, sizeof(found_entry));
+                }
+                memset(lfn_name, 0, sizeof(lfn_name));
+                lfn_active = false;
+                lfn_valid = false;
+                expected_order = 0;
+                if (!matches)
+                    continue;
+                u32 matched_cluster = (((u32)found_entry.cluster_high << 16) | found_entry.cluster_low) & 0x0FFFFFFF;
+                if (depth + 1 < fp->path_count) {
+                    if (!(found_entry.attr & 0x10) || matched_cluster < 2 || matched_cluster - 2 >= traversal_limit) {
+                        result = 2;
                         goto cleanup;
                     }
-                    u32 filename_offset = (order_index - 1) * 13;
-                    u32 room = FILENAME_LENGTH - 1 - filename_offset;
-                    u32 count;
-                    wcatomba((u8 *)charbuf, ((LFN_entry *)current)->first, 5);
-                    count = room < 5 ? room : 5;
-                    if (count)
-                        memcpy(filename + filename_offset, charbuf, count);
-                    room -= count;
-                    wcatomba((u8 *)charbuf, ((LFN_entry *)current)->middle, 6);
-                    count = room < 6 ? room : 6;
-                    if (count)
-                        memcpy(filename + filename_offset + 5, charbuf, count);
-                    room -= count;
-                    wcatomba((u8 *)charbuf, ((LFN_entry *)current)->last, 2);
-                    count = room < 2 ? room : 2;
-                    if (count)
-                        memcpy(filename + filename_offset + 11, charbuf, count);
-                    if (len <= FILENAME_LENGTH - 14)
-                        len += 13;
-                    else
-                        len = FILENAME_LENGTH - 1;
-					++current;
-					++i;
-
-					if (i >= bytes_per_cluster / sizeof(FAT_entry)) {
-                        if (!readsectorpio(partoffset + fs_info->fat + active_cluster / FEPS, 1, FAT_buffer, disk)) {
-                            diagnostics_log("FAT32 lookup: FAT-sector read failed while scanning a directory.");
-                            result = 1;
-                            goto cleanup;
-                        }
-                        u32 next_cluster = FAT_buffer[active_cluster % FEPS] & 0x0FFFFFFF;
-                        if (next_cluster < 2 || next_cluster >= 0x0FFFFFF0 || next_cluster - 2 >= traversal_limit || ++traversed > traversal_limit) {
-                            diagnostics_log("FAT32 lookup: LFN continuation cluster is outside the volume bounds.");
-                            result = 1;
-                            goto cleanup;
-                        }
-                        active_cluster = next_cluster;
-                        if (!readsectorpio(partoffset + fs_info->data + (u64)active_cluster * fs_info->sectors_per_cluster, fs_info->sectors_per_cluster, buffer, disk)) {
-                            diagnostics_log("FAT32 lookup: LFN continuation cluster read failed.");
-                            result = 1;
-                            goto cleanup;
-                        }
-                        goto inloop2;
-                    }
-				}
-				filename[len] = '\0';
-				len = 0;
-			}
-			else {
-				for (j = 0; (filename[j] = current->name[j]) != ' ' && j < 8; ++j);
-				filename[j] = '.';
-				memcpy(&filename[j + 1], current->extension, 3);
-				filename[j + 4] = '\0';
-			}
-
-			if (depth >= fp->path_count || !fp->path[depth]) {
-                    diagnostics_log("FAT32 lookup: path depth exceeded its validated component count.");
-                    result = 1;
-                    goto cleanup;
+                    directory_cluster = matched_cluster;
+                    component_found = true;
+                    break;
                 }
-                if (!strcmp(filename, fp->path[depth])) {
-                u32 matched_cluster = ((u32)current->cluster_high << 16) | current->cluster_low;
-                bool matched_directory = (current->attr & 0x10) != 0;
-                if ((matched_directory || current->size != 0) && (matched_cluster < 2 || matched_cluster - 2 >= traversal_limit)) {
-                    diagnostics_log("FAT32 lookup: matched entry points outside the valid cluster range.");
-                    result = 1;
-                    goto cleanup;
-                }
-                active_cluster = matched_cluster;
-                memcpy(entry, current, sizeof(FAT_entry));
-                if (!(current->attr & 0x10)) {
-                    result = 0;
-                    goto cleanup;
-                }
-                ++depth;
-                if (!fp->path[depth]) {
+                if (found_entry.attr & 0x10) {
                     result = 2;
                     goto cleanup;
                 }
-                traversed = 0;
-                goto inloop;
+                if (found_entry.size != 0 && (matched_cluster < 2 || matched_cluster - 2 >= traversal_limit)) {
+                    diagnostics_log("FAT32 lookup: file entry cluster is outside the valid data region.");
+                    result = 1;
+                    goto cleanup;
+                }
+                memcpy(entry, &found_entry, sizeof(*entry));
+                memcpy(filename, matched_name, copy_length + 1);
+                result = 0;
+                goto cleanup;
             }
-			++current;
-		}
-        if (!readsectorpio(partoffset + fs_info->fat + active_cluster / FEPS, 1, FAT_buffer, disk)) {
-            diagnostics_log("FAT32 lookup: FAT-sector read failed while advancing a directory chain.");
-            result = 1;
+            if (component_found || directory_ended)
+                break;
+            u32 fat_sector_index = cluster / FEPS;
+            if (fat_sector_index >= fs_info->sectors_per_fat) {
+                diagnostics_log("FAT32 lookup: directory cluster exceeds FAT capacity.");
+                result = 1;
+                goto cleanup;
+            }
+            if (!readsectorpio((u64)partoffset + fs_info->fat + fat_sector_index, 1, fat_buffer, disk)) {
+                diagnostics_log("FAT32 lookup: FAT-sector read failed while advancing a directory chain.");
+                result = 1;
+                goto cleanup;
+            }
+            u32 next_cluster = fat_buffer[cluster % FEPS] & 0x0FFFFFFF;
+            if (next_cluster >= 0x0FFFFFF8) {
+                chain_ended = true;
+                break;
+            }
+            if (next_cluster < 2 || next_cluster >= 0x0FFFFFF0 || next_cluster - 2 >= traversal_limit) {
+                diagnostics_log("FAT32 lookup: directory chain contains an invalid cluster link.");
+                result = 1;
+                goto cleanup;
+            }
+            cluster = next_cluster;
+        }
+        if (!component_found) {
+            if (!directory_ended && !chain_ended && traversed >= traversal_limit) {
+                diagnostics_log("FAT32 lookup: directory chain exceeded its traversal limit.");
+                result = 1;
+            } else {
+                result = 2;
+            }
             goto cleanup;
         }
-        u32 next_cluster = FAT_buffer[active_cluster % FEPS] & 0x0FFFFFFF;
-        if (next_cluster >= 0x0FFFFFF8) {
-            result = 2;
-            goto cleanup;
-        }
-        if (next_cluster < 2 || next_cluster >= 0x0FFFFFF0 || next_cluster - 2 >= traversal_limit) {
-            diagnostics_log("FAT32 lookup: directory cluster link is outside the volume bounds.");
-            result = 1;
-            goto cleanup;
-        }
-        active_cluster = next_cluster;
-    } while (true);
-
+    }
     result = 2;
 cleanup:
-    free(FAT_buffer);
-    free(buffer);
+    free(cluster_buffer);
+    free(fat_buffer);
     return result;
 }
-
 bool fat_filesize(FILE *fp, unsigned long long *size) {
     if (!fp || !size)
         return false;
