@@ -13,7 +13,107 @@
 #include <keyboard.h>
 #include <disk.h>
 #include <diagnostics.h>
+#include <FS.h>
 #include "init.h"
+
+static void fat_runtime_smoke_test(void) {
+    if (!disktable || !volumes)
+        return;
+
+    FS fs = disktable[0].parts[0].fs;
+    if (fs != fat16 && fs != fat32)
+        return;
+
+    char root_path[] = "|A/";
+    DIR *root = opendir(root_path);
+    if (!root) {
+        terminal_write("FAT TEST ROOT FAILED\n");
+        diagnostics_log("FAT test: root directory open failed.");
+        return;
+    }
+
+    bool directory_seen = false;
+    bool directory_passed = false;
+    bool file_seen = false;
+    bool file_passed = false;
+    dirent *entry;
+
+    while ((entry = readdir(root)) != 0) {
+        bool dot_entry = entry->name[0] == '.' && (entry->name[1] == '\0' || (entry->name[1] == '.' && entry->name[2] == '\0'));
+
+        if (entry->type == DIRENT_DIR && !directory_seen && !dot_entry) {
+            u32 name_length = 0;
+            while (entry->name[name_length] && name_length < FILENAME_LENGTH - 4)
+                ++name_length;
+            if (name_length != 0 && entry->name[name_length] == '\0') {
+                char path[FILENAME_LENGTH];
+                memcpy(path, root_path, 3);
+                memcpy(path + 3, entry->name, name_length);
+                path[3 + name_length] = '\0';
+                directory_seen = true;
+                DIR *child = opendir(path);
+                if (child) {
+                    readdir(child);
+                    directory_passed = closedir(child) == 0;
+                }
+            }
+        }
+
+        if (entry->type == DIRENT_FILE && entry->size != 0 && !file_seen) {
+            u32 name_length = 0;
+            while (entry->name[name_length] && name_length < FILENAME_LENGTH - 4)
+                ++name_length;
+            if (name_length != 0 && entry->name[name_length] == '\0') {
+                char path[FILENAME_LENGTH];
+                memcpy(path, root_path, 3);
+                memcpy(path + 3, entry->name, name_length);
+                path[3 + name_length] = '\0';
+                file_seen = true;
+                FILE *fp = fopen(path, 0);
+                if (fp) {
+                    u8 first = 0;
+                    u8 last = 0;
+                    bool first_read = fread(&first, 1, fp) == 1;
+                    bool last_read = fseek(fp, -1, SEEK_END) == 0 && fread(&last, 1, fp) == 1;
+                    file_passed = first_read && last_read;
+                    if (fclose(fp) != 0)
+                        file_passed = false;
+                }
+            }
+        }
+    }
+
+    bool root_closed = closedir(root) == 0;
+    if (root_closed) {
+        terminal_write("FAT ROOT DIRECTORY OK\n");
+        diagnostics_log("FAT test: root directory opened, enumerated and closed.");
+    } else {
+        terminal_write("FAT ROOT DIRECTORY FAILED\n");
+        diagnostics_log("FAT test: root directory close failed.");
+    }
+
+    if (directory_seen && directory_passed) {
+        terminal_write("FAT NESTED DIRECTORY OK\n");
+        diagnostics_log("FAT test: nested directory opened and closed.");
+    } else if (directory_seen) {
+        terminal_write("FAT NESTED DIRECTORY FAILED\n");
+        diagnostics_log("FAT test: nested directory open or close failed.");
+    } else {
+        terminal_write("FAT NESTED DIRECTORY SKIPPED\n");
+        diagnostics_log("FAT test: no root directory entry was available for nested-directory testing.");
+    }
+
+    if (file_seen && file_passed) {
+        terminal_write("FAT FILE READ AND SEEK OK\n");
+        diagnostics_log("FAT test: file open, first-byte read, end-relative seek, last-byte read and close passed.");
+    } else if (file_seen) {
+        terminal_write("FAT FILE READ AND SEEK FAILED\n");
+        diagnostics_log("FAT test: file open, read, seek or close failed.");
+    } else {
+        terminal_write("FAT FILE READ SKIPPED\n");
+        diagnostics_log("FAT test: no non-empty file was available in the root directory.");
+    }
+}
 
 void init(tosaithe_loader_data *loader_data) {
         diagnostics_init();
@@ -108,6 +208,7 @@ void init(tosaithe_loader_data *loader_data) {
         diagnostics_log("Boot: initializing disk/filesystem.");
         init_disk();
         diagnostics_log("Boot checkpoint: disk and filesystem initialization finished.");
+        fat_runtime_smoke_test();
         diagnostics_log("Boot: disk initialization returned.");
 
         if (disktable &&
