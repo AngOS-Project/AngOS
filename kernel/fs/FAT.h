@@ -180,6 +180,9 @@ int fat_cat(unsigned int disk, const char *filename);
 int fat16_find_file_entry(const FILE *fp, FAT_entry *entry);
 int fat16_dir_open(DIR *dir, const char *path);
 int fat16_dir_read(DIR *dir);
+int fat32_dir_open(DIR *dir, const char *path);
+int fat32_dir_read(DIR *dir);
+void fat32_dir_close(DIR *dir);
 
 bool fat_probe(unsigned int disk);
 

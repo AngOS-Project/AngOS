@@ -421,6 +421,14 @@ DIR *opendir(char *path) {
             return dir;
         }
 
+        if (dir->fs == fat32) {
+            if (!fat32_dir_open(dir, path)) {
+                memset(dir, 0, sizeof(DIR));
+                return 0;
+            }
+            return dir;
+        }
+
         memset(dir, 0, sizeof(DIR));
         return 0;
     }
@@ -437,6 +445,10 @@ dirent *readdir(DIR *dir) {
             if (fat16_dir_read(dir))
                 return &dir->entry;
             return 0;
+        case fat32:
+            if (fat32_dir_read(dir))
+                return &dir->entry;
+            return 0;
         default:
             return 0;
     }
@@ -446,6 +458,8 @@ int closedir(DIR *dir) {
     if (!fs_dir_is_open(dir))
         return 1;
 
+    if (dir->fs == fat32)
+        fat32_dir_close(dir);
     memset(dir, 0, sizeof(DIR));
     return 0;
 }
