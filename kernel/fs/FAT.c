@@ -1050,7 +1050,7 @@ int fat_detect(unsigned int disk) {
         return 16;
     }
 
-    if (partition_type == 0x0B || partition_type == 0x0C) {
+    if (partition_type == 0x0B || partition_type == 0x0C || partition_type == 0xEF) {
         u32 sectors_per_fat =
             (u32)boot[36] |
             ((u32)boot[37] << 8) |
