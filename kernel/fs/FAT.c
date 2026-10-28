@@ -594,17 +594,25 @@ static void fat32_lfn_reset(char *name, bool *active, bool *valid, u8 *checksum,
 static void fat32_lfn_consume(char *name, bool *active, bool *valid, u8 *checksum, u32 *expected_order, const LFN_entry *lfn) {
     u8 raw_order = lfn->order;
     u32 order = raw_order & 0x1F;
-    if (raw_order & 0x40) {
-        memset(name, 0, FILENAME_LENGTH);
+    bool begins = (raw_order & 0x40) != 0;
+    bool invalid_metadata = (raw_order & 0xA0) != 0 || lfn->attr != LFN || lfn->long_entry != 0 || lfn->zero != 0;
+    if (begins) {
+        fat32_lfn_reset(name, active, valid, checksum, expected_order);
+        if (order == 0 || order > 20 || invalid_metadata) {
+            diagnostics_log("FAT32 lookup: invalid long-filename metadata.");
+            return;
+        }
         *active = true;
         *valid = true;
         *checksum = lfn->checksum;
         *expected_order = order;
-    }
-    if (!*active)
+    } else if (!*active) {
         return;
-    if ((raw_order & 0xA0) != 0 || order == 0 || order > 20 || order != *expected_order || lfn->checksum != *checksum)
+    }
+    if (invalid_metadata || order == 0 || order > 20 || order != *expected_order || lfn->checksum != *checksum) {
         *valid = false;
+        diagnostics_log("FAT32 lookup: inconsistent long-filename sequence.");
+    }
     if (order == 0 || order > 20) {
         *valid = false;
         *expected_order = 0;
