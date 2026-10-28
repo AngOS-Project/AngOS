@@ -1,0 +1,28 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Primary,Master,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Primary,Master,0x0)
+AngOS bootloader starting...
+Loading AngOS kernel...
+[WATCHTOWER] Serial diagnostics initialized.
+[WATCHTOWER] Boot: kernel init entered.
+[WATCHTOWER] Boot checkpoint: terminal initialized.
+[WATCHTOWER] Boot: framebuffer console initialized.
+[WATCHTOWER] Boot checkpoint: physical memory initialized.
+[WATCHTOWER] Boot: initializing physical memory.
+[WATCHTOWER] Boot checkpoint: GDT initialized.
+[WATCHTOWER] Boot: GDT initialized.
+[WATCHTOWER] Boot checkpoint: IDT initialized.
+[WATCHTOWER] Boot: IDT initialized.
+[WATCHTOWER] Boot checkpoint: paging and heap initialized.
+[WATCHTOWER] Boot: paging initialization returned.
+[WATCHTOWER] Boot checkpoint: keyboard initialized.
+[WATCHTOWER] Boot: keyboard initialized.
+[WATCHTOWER] Boot checkpoint: timer initialized.
+[WATCHTOWER] Boot: timer initialized.
+[WATCHTOWER] Boot: initializing disk/filesystem.
+[WATCHTOWER] Boot checkpoint: disk and filesystem initialization finished.
+[WATCHTOWER] FAT test: root directory opened, enumerated and closed.
+[WATCHTOWER] FAT test: nested directory opened and closed.
+[WATCHTOWER] FAT test: file open, first-byte read, end-relative seek, last-byte read and close passed.
+[WATCHTOWER] Boot: disk initialization returned.
+[WATCHTOWER] Boot: kernel initialization complete.
+[WATCHTOWER] Boot checkpoint: kernel initialization complete.
