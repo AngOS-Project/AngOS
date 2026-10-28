@@ -819,11 +819,41 @@ int fat32_dir_open(DIR *dir, const char *path) {
 }
 
 int fat32_dir_read(DIR *dir) {
-    if (!dir || !volumes || dir->volume >= LETTERS)
+    if (!dir || !volumes || !disktable || dir->volume >= LETTERS || dir->fs != fat32)
         return 0;
-    fat32_dir_state_t *state = (fat32_dir_state_t *)(u64)dir->fsdata[0];
-    if (!state || !state->buffer || state->disk >= 4 || state->cluster_limit == 0) {
+    unsigned int disk = volumes[dir->volume].disk;
+    unsigned int part = volumes[dir->volume].partition;
+    if (disk >= 4 || part >= 4 || disktable[disk].parts[part].fs != fat32) {
         dir->reserved = 1;
+        return 0;
+    }
+    fat32_dir_state_t *state = (fat32_dir_state_t *)(u64)dir->fsdata[0];
+    if (!state || !state->buffer || state->disk >= 4 || state->disk != disk || state->cluster_limit == 0) {
+        dir->reserved = 1;
+        diagnostics_log("FAT32 directory: state is unavailable or invalid.");
+        return 0;
+    }
+    fat_fs_info *fs_info = (fat_fs_info *)disktable[disk].parts[part].fsdata;
+    if (!fs_info || fs_info->bytes_per_sector != SECTOR_SIZE || fs_info->sectors_per_cluster == 0 || fs_info->sectors_per_cluster > 128 || (fs_info->sectors_per_cluster & (fs_info->sectors_per_cluster - 1)) != 0 || fs_info->sectors_per_fat == 0 || fs_info->sector_count == 0) {
+        state->ended = true;
+        dir->reserved = 1;
+        diagnostics_log("FAT32 directory: mounted filesystem metadata is invalid.");
+        return 0;
+    }
+    u64 data_start_wide = (u64)fs_info->data + (u64)2 * fs_info->sectors_per_cluster;
+    if (data_start_wide >= fs_info->sector_count || data_start_wide > 0xFFFFFFFFULL) {
+        state->ended = true;
+        dir->reserved = 1;
+        diagnostics_log("FAT32 directory: data region is outside the volume bounds.");
+        return 0;
+    }
+    u32 data_start = (u32)data_start_wide;
+    u32 cluster_limit = (fs_info->sector_count - data_start) / fs_info->sectors_per_cluster;
+    u32 bytes_per_cluster = (u32)fs_info->bytes_per_sector * fs_info->sectors_per_cluster;
+    if (cluster_limit == 0 || (u64)cluster_limit + 2 > (u64)fs_info->sectors_per_fat * FEPS || state->partoffset != disktable[disk].parts[part].loc || state->fat_offset != fs_info->fat || state->data_offset != fs_info->data || state->sectors_per_fat != fs_info->sectors_per_fat || state->sectors_per_cluster != fs_info->sectors_per_cluster || state->cluster_limit != cluster_limit || state->entries_per_cluster != bytes_per_cluster / sizeof(FAT_entry) || state->entries_per_cluster == 0) {
+        state->ended = true;
+        dir->reserved = 1;
+        diagnostics_log("FAT32 directory: state metadata does not match the mounted volume.");
         return 0;
     }
     while (!state->ended) {
