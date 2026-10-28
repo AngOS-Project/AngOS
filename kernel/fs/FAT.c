@@ -30,7 +30,7 @@ bool fat_setup(unsigned int disk, unsigned int part) {
         diagnostics_log("FAT32 setup: boot-sector read failed.");
         return false;
     }
-    if (BPB.bytes_per_sector != SECTOR_SIZE || BPB.sectors_per_cluster == 0 || BPB.sectors_per_cluster > 128 || (BPB.sectors_per_cluster & (BPB.sectors_per_cluster - 1)) != 0 || BPB.reserved_sectors == 0 || BPB.FAT_count == 0 || BPB.sectors_per_FAT == 0 || BPB.root_cluster < 2) {
+    if (BPB.bootsig != 0xAA55 || BPB.bytes_per_sector != SECTOR_SIZE || BPB.sectors_per_cluster == 0 || BPB.sectors_per_cluster > 128 || (BPB.sectors_per_cluster & (BPB.sectors_per_cluster - 1)) != 0 || BPB.reserved_sectors == 0 || BPB.FAT_count == 0 || BPB.sectors_per_FAT == 0 || BPB.root_cluster < 2) {
         diagnostics_log("FAT32 setup: invalid boot-sector metadata.");
         return false;
     }
@@ -46,6 +46,11 @@ bool fat_setup(unsigned int disk, unsigned int part) {
     fs_info.sector_count = BPB.sector_count_small ? BPB.sector_count_small : BPB.sector_count_large;
     if (fs_info.sector_count == 0) {
         diagnostics_log("FAT32 setup: volume reports no sectors.");
+        return false;
+    }
+    u64 partition_end = (u64)info->loc + fs_info.sector_count;
+    if (partition_end > 0x100000000ULL || (info->size != 0 && fs_info.sector_count > info->size) || (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks)) {
+        diagnostics_log("FAT32 setup: volume extends beyond partition or disk bounds.");
         return false;
     }
     u64 fat_start = BPB.reserved_sectors;
