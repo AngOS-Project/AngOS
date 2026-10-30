@@ -79,6 +79,7 @@ def main():
         ent("EFI", "", 0x10, 3),
         ent("TESTDIR", "", 0x10, 5),
         ent("RUNTIME", "TXT", 0x20, test_cluster, len(test_data)),
+        ent("EMPTY", "TXT", 0x20, 0, 0),
         ent("ANGOS", "ELF", 0x20, kernel_cluster, len(kernel_data))
     ])
     clusters[3] = directory([

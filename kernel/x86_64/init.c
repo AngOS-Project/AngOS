@@ -25,6 +25,29 @@ static void fat_runtime_smoke_test(void) {
         return;
 
     char root_path[] = "|A/";
+    char empty_path[FILENAME_LENGTH];
+    empty_path[0] = '\0';
+
+    bool directory_seen = false;
+    bool directory_passed = false;
+    bool file_seen = false;
+    bool file_passed = false;
+    bool empty_seen = false;
+    bool empty_passed = false;
+
+    char missing_file_path[] = "|A/MISSING.TXT";
+    char missing_dir_path[] = "|A/MISSING_DIR";
+
+    FILE *missing_file = fopen(missing_file_path, 0);
+    bool missing_file_rejected = missing_file == 0;
+    if (missing_file && fclose(missing_file) != 0)
+        missing_file_rejected = false;
+
+    DIR *missing_dir = opendir(missing_dir_path);
+    bool missing_dir_rejected = missing_dir == 0;
+    if (missing_dir && closedir(missing_dir) != 0)
+        missing_dir_rejected = false;
+
     DIR *root = opendir(root_path);
     if (!root) {
         terminal_write("FAT TEST ROOT FAILED\n");
@@ -32,58 +55,93 @@ static void fat_runtime_smoke_test(void) {
         return;
     }
 
-    bool directory_seen = false;
-    bool directory_passed = false;
-    bool file_seen = false;
-    bool file_passed = false;
     dirent *entry;
 
     while ((entry = readdir(root)) != 0) {
-        bool dot_entry = entry->name[0] == '.' && (entry->name[1] == '\0' || (entry->name[1] == '.' && entry->name[2] == '\0'));
+        bool dot_entry = entry->name[0] == '.' &&
+            (entry->name[1] == '\0' ||
+             (entry->name[1] == '.' && entry->name[2] == '\0'));
+
+        u32 name_length = 0;
+        while (entry->name[name_length] && name_length < FILENAME_LENGTH - 4)
+            ++name_length;
+
+        if (name_length == 0 || entry->name[name_length] != '\0')
+            continue;
+
+        char path[FILENAME_LENGTH];
+        memcpy(path, root_path, 3);
+        memcpy(path + 3, entry->name, name_length);
+        path[3 + name_length] = '\0';
 
         if (entry->type == DIRENT_DIR && !directory_seen && !dot_entry) {
-            u32 name_length = 0;
-            while (entry->name[name_length] && name_length < FILENAME_LENGTH - 4)
-                ++name_length;
-            if (name_length != 0 && entry->name[name_length] == '\0') {
-                char path[FILENAME_LENGTH];
-                memcpy(path, root_path, 3);
-                memcpy(path + 3, entry->name, name_length);
-                path[3 + name_length] = '\0';
-                directory_seen = true;
-                DIR *child = opendir(path);
-                if (child) {
-                    readdir(child);
-                    directory_passed = closedir(child) == 0;
-                }
+            directory_seen = true;
+            DIR *child = opendir(path);
+            if (child) {
+                readdir(child);
+                directory_passed = closedir(child) == 0;
             }
         }
 
-        if (entry->type == DIRENT_FILE && entry->size != 0 && !file_seen) {
-            u32 name_length = 0;
-            while (entry->name[name_length] && name_length < FILENAME_LENGTH - 4)
-                ++name_length;
-            if (name_length != 0 && entry->name[name_length] == '\0') {
-                char path[FILENAME_LENGTH];
-                memcpy(path, root_path, 3);
-                memcpy(path + 3, entry->name, name_length);
-                path[3 + name_length] = '\0';
-                file_seen = true;
-                FILE *fp = fopen(path, 0);
-                if (fp) {
-                    u8 first = 0;
-                    u8 last = 0;
-                    bool first_read = fread(&first, 1, fp) == 1;
-                    bool last_read = fseek(fp, -1, SEEK_END) == 0 && fread(&last, 1, fp) == 1;
-                    file_passed = first_read && last_read;
-                    if (fclose(fp) != 0)
-                        file_passed = false;
+        if (entry->type != DIRENT_FILE)
+            continue;
+
+        if (entry->size == 0 && !empty_seen) {
+            empty_seen = true;
+            memcpy(empty_path, path, 3 + name_length + 1);
+        }
+
+        if (entry->size == 0 || entry->size > 4096 || file_seen)
+            continue;
+
+        file_seen = true;
+        FILE *fp = fopen(path, 0);
+
+        if (fp) {
+            size_t file_size = (size_t)entry->size;
+            u8 *data = malloc(file_size);
+
+            if (data) {
+                bool full_read = fread(data, file_size, fp) == file_size;
+                u8 probe = 0;
+                bool eof_ok = full_read && fread(&probe, 1, fp) == 0;
+                bool boundary_ok = full_read;
+                bool last_ok = false;
+
+                if (full_read && file_size > 512) {
+                    u8 actual[4];
+                    u32 offset = 510;
+                    boundary_ok = fseek(fp, offset, SEEK_SET) == 0 &&
+                        fread(actual, sizeof(actual), fp) == sizeof(actual);
+
+                    if (boundary_ok) {
+                        for (u32 i = 0; i < sizeof(actual); ++i) {
+                            if (actual[i] != data[offset + i])
+                                boundary_ok = false;
+                        }
+                    }
                 }
+
+                if (full_read && fseek(fp, -1, SEEK_END) == 0 &&
+                    fread(&probe, 1, fp) == 1 &&
+                    probe == data[file_size - 1])
+                    last_ok = true;
+
+                bool invalid_seek = fseek(fp, (long long)file_size + 1, SEEK_SET) != 0;
+
+                file_passed = full_read && eof_ok && boundary_ok &&
+                    last_ok && invalid_seek;
+
+                free(data);
             }
+
+            if (fclose(fp) != 0)
+                file_passed = false;
         }
     }
 
     bool root_closed = closedir(root) == 0;
+
     if (root_closed) {
         terminal_write("FAT ROOT DIRECTORY OK\n");
         diagnostics_log("FAT test: root directory opened, enumerated and closed.");
@@ -100,21 +158,56 @@ static void fat_runtime_smoke_test(void) {
         diagnostics_log("FAT test: nested directory open or close failed.");
     } else {
         terminal_write("FAT NESTED DIRECTORY SKIPPED\n");
-        diagnostics_log("FAT test: no root directory entry was available for nested-directory testing.");
+        diagnostics_log("FAT test: no nested directory was available.");
     }
 
     if (file_seen && file_passed) {
         terminal_write("FAT FILE READ AND SEEK OK\n");
-        diagnostics_log("FAT test: file open, first-byte read, end-relative seek, last-byte read and close passed.");
+        terminal_write("FAT EOF AND CLUSTER BOUNDARY OK\n");
+        diagnostics_log("FAT test: full file read, EOF, cluster-boundary read, last-byte seek and invalid seek passed.");
     } else if (file_seen) {
         terminal_write("FAT FILE READ AND SEEK FAILED\n");
-        diagnostics_log("FAT test: file open, read, seek or close failed.");
+        terminal_write("FAT EOF AND CLUSTER BOUNDARY FAILED\n");
+        diagnostics_log("FAT test: full file read, EOF, cluster boundary or seek failed.");
     } else {
         terminal_write("FAT FILE READ SKIPPED\n");
-        diagnostics_log("FAT test: no non-empty file was available in the root directory.");
+        terminal_write("FAT EOF AND CLUSTER BOUNDARY SKIPPED\n");
+        diagnostics_log("FAT test: no suitable non-empty file was available.");
+    }
+
+    if (empty_seen) {
+        FILE *empty = fopen(empty_path, 0);
+        if (empty) {
+            u8 probe = 0;
+            bool size_ok = fsize(empty) == 0;
+            bool read_ok = fread(&probe, 1, empty) == 0;
+            bool seek_ok = fseek(empty, 0, SEEK_END) == 0;
+            bool eof_ok = seek_ok && fread(&probe, 1, empty) == 0;
+            empty_passed = size_ok && read_ok && eof_ok;
+            if (fclose(empty) != 0)
+                empty_passed = false;
+        }
+
+        if (empty_passed) {
+            terminal_write("FAT EMPTY FILE OK\n");
+            diagnostics_log("FAT test: empty file open, size, read, EOF and close passed.");
+        } else {
+            terminal_write("FAT EMPTY FILE FAILED\n");
+            diagnostics_log("FAT test: empty file handling failed.");
+        }
+    } else {
+        terminal_write("FAT EMPTY FILE SKIPPED\n");
+        diagnostics_log("FAT test: no empty file was present.");
+    }
+
+    if (missing_file_rejected && missing_dir_rejected) {
+        terminal_write("FAT INVALID PATH REJECTION OK\n");
+        diagnostics_log("FAT test: nonexistent file and directory were rejected.");
+    } else {
+        terminal_write("FAT INVALID PATH REJECTION FAILED\n");
+        diagnostics_log("FAT test: a nonexistent path was accepted or cleanup failed.");
     }
 }
-
 void init(tosaithe_loader_data *loader_data) {
         diagnostics_init();
         diagnostics_log("Boot: kernel init entered.");
