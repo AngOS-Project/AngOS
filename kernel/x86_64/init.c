@@ -20,11 +20,19 @@ static void fat_runtime_smoke_test(void) {
     if (!disktable || !volumes)
         return;
 
-    FS fs = disktable[0].parts[0].fs;
+    unsigned int test_disk = 0;
+    u8 test_volume = 0;
+    if (disktable[1].parts[0].fs == fat16) {
+        test_disk = 1;
+        test_volume = 1;
+        terminal_write("FAT16 TEST DISK DETECTED\\n");
+    }
+    FS fs = disktable[test_disk].parts[0].fs;
     if (fs != fat16 && fs != fat32)
         return;
 
     char root_path[] = "|A/";
+    root_path[1] = (char)('A' + test_volume);
     char empty_path[FILENAME_LENGTH];
     empty_path[0] = '\0';
 

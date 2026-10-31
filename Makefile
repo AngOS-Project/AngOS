@@ -119,3 +119,22 @@ run-fat32: deploy
 		-no-reboot \
 		-d int,cpu_reset \
 		-D qemu/qemu-fat32.log
+
+
+.PHONY: run-fat16
+run-fat16: deploy
+	@mkdir -p build
+	python tools/make_fat32_test_disk.py build/fat32-test-disk.img build/AngOS.efi build/AngOS.elf
+	python tools/make_fat16_test_disk.py build/fat16-test-disk.img
+	cp qemu/UEFI_VARS.fd build/UEFI_VARS_FAT16.fd
+	/mingw64/bin/qemu-system-x86_64.exe \
+		-serial file:angos-fat16-serial.log \
+		-drive if=pflash,format=raw,readonly=on,file=/mingw64/share/qemu/edk2-x86_64-code.fd \
+		-drive if=pflash,format=raw,file=build/UEFI_VARS_FAT16.fd \
+		-drive if=ide,index=0,media=disk,format=raw,file=build/fat32-test-disk.img \
+		-drive if=ide,index=1,media=disk,format=raw,file=build/fat16-test-disk.img \
+		-boot order=c \
+		-m 512M \
+		-no-reboot \
+		-d int,cpu_reset \
+		-D qemu/qemu-fat16.log

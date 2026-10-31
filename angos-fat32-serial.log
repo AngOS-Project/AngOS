@@ -20,9 +20,12 @@ Loading AngOS kernel...
 [WATCHTOWER] Boot: timer initialized.
 [WATCHTOWER] Boot: initializing disk/filesystem.
 [WATCHTOWER] Boot checkpoint: disk and filesystem initialization finished.
+[WATCHTOWER] FAT32 file-size lookup failed.
 [WATCHTOWER] FAT test: root directory opened, enumerated and closed.
 [WATCHTOWER] FAT test: nested directory opened and closed.
-[WATCHTOWER] FAT test: file open, first-byte read, end-relative seek, last-byte read and close passed.
+[WATCHTOWER] FAT test: full file read, EOF, cluster-boundary read, last-byte seek and invalid seek passed.
+[WATCHTOWER] FAT test: empty file open, size, read, EOF and close passed.
+[WATCHTOWER] FAT test: nonexistent file and directory were rejected.
 [WATCHTOWER] Boot: disk initialization returned.
 [WATCHTOWER] Boot: kernel initialization complete.
 [WATCHTOWER] Boot checkpoint: kernel initialization complete.

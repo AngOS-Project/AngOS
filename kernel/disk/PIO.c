@@ -368,6 +368,44 @@ void init_disk(void) {
         disk_capacity[0] = detected_blocks;
     }
 
+    u8 secondary_mbr[SECTOR_SIZE];
+    if (disk_read_sector(0, secondary_mbr, 1) &&
+        secondary_mbr[510] == 0x55 &&
+        secondary_mbr[511] == 0xAA) {
+        u32 secondary_lba =
+            (u32)secondary_mbr[454] |
+            ((u32)secondary_mbr[455] << 8) |
+            ((u32)secondary_mbr[456] << 16) |
+            ((u32)secondary_mbr[457] << 24);
+        u32 secondary_size =
+            (u32)secondary_mbr[458] |
+            ((u32)secondary_mbr[459] << 8) |
+            ((u32)secondary_mbr[460] << 16) |
+            ((u32)secondary_mbr[461] << 24);
+        u64 secondary_end = (u64)secondary_lba + secondary_size;
+
+        if (secondary_lba != 0 && secondary_size != 0 &&
+            secondary_end <= 0x100000000ULL) {
+            partinfo *secondary = &disktable[1].parts[0];
+            secondary->loc = secondary_lba;
+            secondary->size = secondary_size;
+
+            int secondary_type = fat_detect(1);
+            if (secondary_type == 12)
+                secondary->fs = fat12;
+            else if (secondary_type == 16)
+                secondary->fs = fat16;
+            else if (secondary_type == 32 && fat_setup(1, 0))
+                secondary->fs = fat32;
+
+            if (secondary->fs != none) {
+                volumes[1].disk = 1;
+                volumes[1].partition = 0;
+                diagnostics_log("Disk: secondary filesystem detected and mounted.");
+            }
+        }
+    }
+
     u8 mbr[SECTOR_SIZE];
     if (!disk_read_sector(0, mbr, 0) || mbr[510] != 0x55 || mbr[511] != 0xAA) {
         diagnostics_log("Disk: MBR read failed or signature is invalid.");
