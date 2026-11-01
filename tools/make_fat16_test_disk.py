@@ -32,8 +32,8 @@ def main():
     if CLUSTERS < 4085 or CLUSTERS > 65524:
         raise SystemExit("Generated volume is not FAT16 geometry.")
 
-    runtime = (b"AngOS FAT16 multi-cluster test.\\r\\n" * 32)[:700]
-    nested = b"AngOS FAT16 nested file test.\\r\\n"
+    runtime = (b"AngOS FAT16 multi-cluster test.\r\n" * 32)[:700]
+    nested = b"AngOS FAT16 nested file test.\r\n"
 
     chains = {
         2: EOC,
@@ -54,10 +54,10 @@ def main():
     mbr[450] = 0x06
     p32(mbr, 454, START)
     p32(mbr, 458, TOTAL)
-    mbr[510:512] = b"\\x55\\xaa"
+    mbr[510:512] = b"\x55\xaa"
 
     boot = bytearray(S)
-    boot[:3] = b"\\xeb\\x3c\\x90"
+    boot[:3] = b"\xeb\x3c\x90"
     boot[3:11] = b"ANGOS   "
     p16(boot, 11, S)
     boot[13] = 1
@@ -75,21 +75,21 @@ def main():
     p32(boot, 39, 0xA2601032)
     boot[43:54] = b"ANGOS TEST "
     boot[54:62] = b"FAT16   "
-    boot[510:512] = b"\\x55\\xaa"
+    boot[510:512] = b"\x55\xaa"
 
     root = b"".join([
         entry("SUBDIR", "", 0x10, 2),
         entry("RUNTIME", "TXT", 0x20, 3, len(runtime)),
         entry("EMPTY", "TXT", 0x20, 0, 0),
         bytes(32)
-    ]).ljust(ROOT_SECTORS * S, b"\\0")
+    ]).ljust(ROOT_SECTORS * S, b"\0")
 
     subdir = b"".join([
         entry(".", "", 0x10, 2),
         entry("..", "", 0x10, 0),
         entry("NESTED", "TXT", 0x20, 5, len(nested)),
         bytes(32)
-    ]).ljust(S, b"\\0")
+    ]).ljust(S, b"\0")
 
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "build/fat16-test-disk.img")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -111,9 +111,9 @@ def main():
 
         data_lba = START + DATA_START
         write(data_lba, subdir)
-        write(data_lba + 1, runtime[:S].ljust(S, b"\\0"))
-        write(data_lba + 2, runtime[S:].ljust(S, b"\\0"))
-        write(data_lba + 3, nested.ljust(S, b"\\0"))
+        write(data_lba + 1, runtime[:S].ljust(S, b"\0"))
+        write(data_lba + 2, runtime[S:].ljust(S, b"\0"))
+        write(data_lba + 3, nested.ljust(S, b"\0"))
 
     print("FAT16 test disk created.")
     print("FAT16 geometry:", CLUSTERS, "clusters")
