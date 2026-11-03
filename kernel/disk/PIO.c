@@ -91,19 +91,24 @@ static bool disk_read_failed(void *buffer, const char *message) {
     return false;
 }
 
-bool disk_probe(u64 *blocks) {
-    if (!blocks)
+bool disk_probe(unsigned int disk, u64 *blocks) {
+    if (!blocks || disk >= DISKS)
         return false;
 
     *blocks = 0;
+    disk_capacity[disk] = 0;
 
-    u16 port = PRIMARY;
+    u16 port = disk >= 2 ? SECOND : PRIMARY;
     u16 id[256];
 
-    outb(port + DHR, 0xA0);
+    outb(port + DHR, disk % 2 ? 0xB0 : 0xA0);
 
     for (u8 i = 0; i < 5; ++i)
         inb(port + STS);
+
+    u8 status = inb(port + STS);
+    if (status == 0 || status == 0xFF)
+        return false;
 
     outb(port + SEC, 0);
     outb(port + LBALO, 0);
@@ -111,9 +116,8 @@ bool disk_probe(u64 *blocks) {
     outb(port + LBAHI, 0);
     outb(port + CMD, IDENTIFY);
 
-    u8 status = inb(port + STS);
-
-    if (status == 0)
+    status = inb(port + STS);
+    if (status == 0 || status == 0xFF)
         return false;
 
     if (!ata_wait_not_busy(port))
@@ -128,19 +132,23 @@ bool disk_probe(u64 *blocks) {
     for (u16 i = 0; i < 256; ++i)
         id[i] = inw(port + DAT);
 
-    u8 final_status = inb(port + STS);
-    if (final_status == 0 || (final_status & (BSY | ERROR | DF)))
+    status = inb(port + STS);
+    if (status == 0 || (status & (BSY | ERROR | DF)))
         return false;
 
-    *blocks =
-        (u64)id[100] |
-        ((u64)id[101] << 16) |
-        ((u64)id[102] << 32) |
-        ((u64)id[103] << 48);
+    if (!(id[49] & 0x0200) || !(id[83] & 0x0400))
+        return false;
 
-    if (*blocks != 0)
-        disk_capacity[0] = *blocks;
-    return *blocks != 0;
+    *blocks = (u64)id[100] |
+              ((u64)id[101] << 16) |
+              ((u64)id[102] << 32) |
+              ((u64)id[103] << 48);
+
+    if (*blocks == 0)
+        return false;
+
+    disk_capacity[disk] = *blocks;
+    return true;
 }
 
 bool disk_read_sector(u64 LBA, void *buffer, unsigned int disk) {
@@ -363,7 +371,7 @@ void init_disk(void) {
     volumes[0].partition = 0;
 
     u64 detected_blocks = 0;
-    if (disk_probe(&detected_blocks)) {
+    if (disk_probe(0, &detected_blocks)) {
         disktable[0].blocks = detected_blocks;
         disk_capacity[0] = detected_blocks;
     }
