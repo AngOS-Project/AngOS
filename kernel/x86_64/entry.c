@@ -1365,7 +1365,7 @@ static bool shell_wt_filesystem_test(void) {
     u64 blocks = 0;
     u8 sector[512];
 
-    if (!disk_probe(&blocks)) {
+    if (!disk_probe(0, &blocks)) {
         diagnostics_log("Watchtower filesystem test: primary disk probe failed.");
         terminal_write("Disk probe: FAILED\n");
         return false;
@@ -1880,7 +1880,7 @@ void execute_command(const char *cmd) {
             "=== Disk ===\n"
         );
 
-        if (disk_probe(&blocks)) {
+        if (disk_probe(0, &blocks)) {
 
             terminal_write(
                 "ATA primary master: DETECTED\n"
