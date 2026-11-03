@@ -370,10 +370,10 @@ void init_disk(void) {
     volumes[0].disk = 0;
     volumes[0].partition = 0;
 
-    u64 detected_blocks = 0;
-    if (disk_probe(0, &detected_blocks)) {
-        disktable[0].blocks = detected_blocks;
-        disk_capacity[0] = detected_blocks;
+    for (unsigned int disk = 0; disk < DISKS; ++disk) {
+        u64 detected_blocks = 0;
+        if (disk_probe(disk, &detected_blocks))
+            disktable[disk].blocks = detected_blocks;
     }
 
     u8 mbr[SECTOR_SIZE];
