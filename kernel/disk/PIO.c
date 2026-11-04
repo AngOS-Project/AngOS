@@ -58,6 +58,40 @@ static bool ata_wait_not_busy(u16 port) {
     return false;
 }
 
+static bool ata_select_drive(u16 port, u8 select) {
+    u8 status = 0;
+    bool idle = false;
+
+    for (u32 i = 0; i < 1000000; ++i) {
+        status = inb(port + STS);
+        if (status == 0 || status == 0xFF || !(status & (BSY | DRQ))) {
+            idle = true;
+            break;
+        }
+    }
+
+    if (!idle)
+        return false;
+
+    outb(port + DHR, select);
+    for (u8 i = 0; i < 15; ++i)
+        inb(port + STS);
+
+    for (u32 i = 0; i < 1000000; ++i) {
+        status = inb(port + STS);
+        if (status == 0 || status == 0xFF)
+            return false;
+        if (status & BSY)
+            continue;
+        if (status & (ERROR | DF))
+            return false;
+        if (!(status & DRQ))
+            return true;
+    }
+
+    return false;
+}
+
 static bool ata_wait_drq(u16 port) {
     for (u32 i = 0; i < 1000000; ++i) {
         u8 status = inb(port + STS);
@@ -103,7 +137,7 @@ bool disk_probe(unsigned int disk, u64 *blocks) {
 
     outb(port + DHR, disk % 2 ? 0xB0 : 0xA0);
 
-    for (u8 i = 0; i < 5; ++i)
+    for (u8 i = 0; i < 15; ++i)
         inb(port + STS);
 
     u8 status = inb(port + STS);
@@ -159,14 +193,10 @@ bool disk_read_sector(u64 LBA, void *buffer, unsigned int disk) {
 
     u16 *buf = (u16 *)buffer;
     u16 port = disk >= 2 ? SECOND : PRIMARY;
-    u8 select = disk % 2 ? 0x50 : 0x40;
+    u8 select = disk % 2 ? 0xF0 : 0xE0;
 
-    if (!ata_wait_not_busy(port))
+    if (!ata_select_drive(port, select))
         return disk_read_failed(buffer, "Disk: drive unavailable before sector read.");
-
-    outb(port + DHR, select);
-    for (u8 i = 0; i < 5; ++i)
-        inb(port + STS);
     outb(port + SEC, 0);
     outb(port + LBALO, (u8)(LBA >> 24));
     outb(port + LBAMID, (u8)(LBA >> 32));
@@ -200,16 +230,12 @@ bool disk_write_sector(u64 LBA, const void *buffer, unsigned int disk) {
 
     const u16 *buf = (const u16 *)buffer;
     u16 port = disk >= 2 ? SECOND : PRIMARY;
-    u8 select = disk % 2 ? 0x50 : 0x40;
+    u8 select = disk % 2 ? 0xF0 : 0xE0;
 
-    if (!ata_wait_not_busy(port)) {
+    if (!ata_select_drive(port, select)) {
         diagnostics_log("Disk: drive unavailable before sector write.");
         return false;
     }
-
-    outb(port + DHR, select);
-    for (u8 i = 0; i < 5; ++i)
-        inb(port + STS);
     outb(port + SEC, 0);
     outb(port + LBALO, (u8)(LBA >> 24));
     outb(port + LBAMID, (u8)(LBA >> 32));
@@ -247,17 +273,13 @@ bool readsectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
 
     u16 *buf = (u16 *)buffer;
     u16 port = disk >= 2 ? SECOND : PRIMARY;
-    u8 outcmd = disk % 2 ? 0x50 : 0x40;
+    u8 outcmd = disk % 2 ? 0xF0 : 0xE0;
 
-    if (!ata_wait_not_busy(port)) {
+    if (!ata_select_drive(port, outcmd)) {
         memset(buffer, 0, (size_t)count * SECTOR_SIZE);
         diagnostics_log("Disk: multi-sector read timed out before command issue.");
         return false;
     }
-
-    outb(port + DHR, outcmd);
-    for (u8 i = 0; i < 5; ++i)
-        inb(port + STS);
 
     outb(port + SEC, (u8)(count >> 8));
     outb(port + LBALO, (u8)(LBA >> 24));
@@ -302,16 +324,12 @@ bool writesectorpio(u64 LBA, u16 count, void *buffer, unsigned int disk) {
 
     const u16 *buf = (const u16 *)buffer;
     u16 port = disk >= 2 ? SECOND : PRIMARY;
-    u8 outcmd = disk % 2 ? 0x50 : 0x40;
+    u8 outcmd = disk % 2 ? 0xF0 : 0xE0;
 
-    if (!ata_wait_not_busy(port)) {
+    if (!ata_select_drive(port, outcmd)) {
         diagnostics_log("Disk: multi-sector write timed out before command issue.");
         return false;
     }
-
-    outb(port + DHR, outcmd);
-    for (u8 i = 0; i < 5; ++i)
-        inb(port + STS);
 
     outb(port + SEC, (u8)(count >> 8));
     outb(port + LBALO, (u8)(LBA >> 24));
