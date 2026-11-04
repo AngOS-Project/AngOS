@@ -367,8 +367,8 @@ void init_disk(void) {
     memset(disktable, 0, sizeof(diskdata) * DISKS);
     memset(volumes, 0, sizeof(volume_t) * LETTERS);
 
-    volumes[0].disk = 0;
-    volumes[0].partition = 0;
+    for (unsigned int volume = 0; volume < LETTERS; ++volume)
+        volumes[volume].disk = DISKS;
 
     for (unsigned int disk = 0; disk < DISKS; ++disk) {
         u64 detected_blocks = 0;
@@ -376,55 +376,61 @@ void init_disk(void) {
             disktable[disk].blocks = detected_blocks;
     }
 
-    u8 mbr[SECTOR_SIZE];
-    if (!disk_read_sector(0, mbr, 0) || mbr[510] != 0x55 || mbr[511] != 0xAA) {
-        diagnostics_log("Disk: MBR read failed or signature is invalid.");
-        disktable[0].parts[0].fs = none;
-        return;
-    }
+    for (unsigned int disk = 0; disk < DISKS; ++disk) {
+        if (disk != 0 && disktable[disk].blocks == 0)
+            continue;
 
-    u32 partition_lba =
-        (u32)mbr[454] |
-        ((u32)mbr[455] << 8) |
-        ((u32)mbr[456] << 16) |
-        ((u32)mbr[457] << 24);
-    u32 partition_sectors =
-        (u32)mbr[458] |
-        ((u32)mbr[459] << 8) |
-        ((u32)mbr[460] << 16) |
-        ((u32)mbr[461] << 24);
-    u64 partition_end = (u64)partition_lba + partition_sectors;
+        u8 mbr[SECTOR_SIZE];
 
-    if (partition_lba == 0 || partition_sectors == 0 || partition_end > 0x100000000ULL || (disktable[0].blocks != 0 && partition_end > disktable[0].blocks)) {
-        diagnostics_log("Disk: first partition has invalid sector bounds.");
-        disktable[0].parts[0].fs = none;
-        return;
-    }
-
-    partinfo *info = &disktable[0].parts[0];
-    info->loc = partition_lba;
-    info->size = partition_sectors;
-
-    int type = fat_detect(0);
-
-    if (type == 12) {
-        info->fs = fat12;
-        return;
-    }
-    if (type == 16) {
-        info->fs = fat16;
-        return;
-    }
-    if (type == 32) {
-        if (!fat_setup(0, 0)) {
-            info->fs = none;
-            diagnostics_log("Disk: FAT32 mount initialization failed.");
-            return;
+        if (!disk_read_sector(0, mbr, disk) ||
+            mbr[510] != 0x55 || mbr[511] != 0xAA) {
+            continue;
         }
-        info->fs = fat32;
-        return;
+
+        u8 partition_type = mbr[450];
+        u32 partition_lba =
+            (u32)mbr[454] |
+            ((u32)mbr[455] << 8) |
+            ((u32)mbr[456] << 16) |
+            ((u32)mbr[457] << 24);
+        u32 partition_sectors =
+            (u32)mbr[458] |
+            ((u32)mbr[459] << 8) |
+            ((u32)mbr[460] << 16) |
+            ((u32)mbr[461] << 24);
+
+        u64 partition_end = (u64)partition_lba + partition_sectors;
+
+        if (partition_type == 0 || partition_lba == 0 ||
+            partition_sectors == 0 ||
+            partition_end > 0x100000000ULL ||
+            (disktable[disk].blocks != 0 &&
+             partition_end > disktable[disk].blocks)) {
+            continue;
+        }
+
+        partinfo *info = &disktable[disk].parts[0];
+        info->loc = partition_lba;
+        info->size = partition_sectors;
+        info->fs = none;
+
+        int type = fat_detect(disk);
+
+        if (type == 12)
+            info->fs = fat12;
+        else if (type == 16)
+            info->fs = fat16;
+        else if (type == 32 && fat_setup(disk, 0))
+            info->fs = fat32;
+
+        if (info->fs == none)
+            continue;
+
+        volumes[disk].disk = disk;
+        volumes[disk].partition = 0;
+        diagnostics_log(disk == 0 ?
+            "Disk: primary filesystem mounted." :
+            "Disk: additional filesystem mounted.");
     }
 
-    info->fs = none;
-    diagnostics_log("Disk: no supported FAT filesystem found on the first partition.");
 }
