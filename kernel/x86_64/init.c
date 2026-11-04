@@ -42,6 +42,8 @@ static void fat_runtime_smoke_test(void) {
 
     char missing_file_path[] = "|A/MISSING.TXT";
     char missing_dir_path[] = "|A/MISSING_DIR";
+    missing_file_path[1] = (char)('A' + test_disk);
+    missing_dir_path[1] = (char)('A' + test_disk);
 
     FILE *missing_file = fopen(missing_file_path, 0);
     bool missing_file_rejected = missing_file == 0;
