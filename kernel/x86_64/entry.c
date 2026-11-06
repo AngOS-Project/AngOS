@@ -1499,6 +1499,16 @@ static const char *shell_expand_first_word(const char *input, char *output, size
     return output;
 }
 
+static bool shell_wt_bytes_equal(const u8 *left, const u8 *right, u32 length) {
+    if (!left || !right)
+        return false;
+    for (u32 i = 0; i < length; ++i) {
+        if (left[i] != right[i])
+            return false;
+    }
+    return true;
+}
+
 static bool shell_wt_fat16_verify_file(const char *path, const u8 *expected, u32 length) {
     FILE *fp = fopen((char *)path, 0);
     if (!fp)
@@ -1507,15 +1517,15 @@ static bool shell_wt_fat16_verify_file(const char *path, const u8 *expected, u32
     bool valid = fp->size == length;
     if (valid && fread(buffer, length, fp) != length)
         valid = false;
-    if (valid && memcmp(buffer, expected, length) != 0)
+    if (valid && !shell_wt_bytes_equal(buffer, expected, length))
         valid = false;
     fclose(fp);
     return valid;
 }
 
 static bool shell_wt_fat16_write_test(void) {
-    static const char test_label[11] = "ANGOS TEST ";
-    static const char test_id[8] = "FAT16   ";
+    static const u8 test_label[11] = {'A', 'N', 'G', 'O', 'S', ' ', 'T', 'E', 'S', 'T', ' '};
+    static const u8 test_id[8] = {'F', 'A', 'T', '1', '6', ' ', ' ', ' '};
     static const char empty_name[11] = {'E', 'M', 'P', 'T', 'Y', ' ', ' ', ' ', 'T', 'X', 'T'};
     u8 boot[512];
     unsigned int test_volume = LETTERS;
@@ -1535,8 +1545,8 @@ static bool shell_wt_fat16_write_test(void) {
             continue;
         if (!disk_read_sector(info->loc, boot, disk))
             continue;
-        if (memcmp(boot + 43, test_label, sizeof(test_label)) == 0 &&
-            memcmp(boot + 54, test_id, sizeof(test_id)) == 0) {
+        if (shell_wt_bytes_equal(boot + 43, test_label, sizeof(test_label)) &&
+            shell_wt_bytes_equal(boot + 54, test_id, sizeof(test_id))) {
             test_volume = i;
             break;
         }
