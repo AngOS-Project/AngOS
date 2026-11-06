@@ -1543,6 +1543,7 @@ static bool fat16_clear_cluster(u32 fat_lba, u32 sectors_per_fat, u8 fat_count, 
 }
 
 int fat16_write_empty_file(
+    unsigned int volume,
     const char name[11],
     const u8 *data,
     u32 length
@@ -1550,30 +1551,21 @@ int fat16_write_empty_file(
     if (!name || !data || length == 0)
         return FAT16_WRITE_BAD_FS;
 
-    if (!disktable || !volumes ||
-        disktable[0].parts[0].fs != fat16)
+    if (!name || volume >= LETTERS || !disktable || !volumes)
         return FAT16_WRITE_BAD_FS;
 
-    unsigned int disk = volumes[0].disk;
+    unsigned int disk = volumes[volume].disk;
+    unsigned int partition = volumes[volume].partition;
 
-    if (disk >= 4)
-        return FAT16_WRITE_BAD_FS;
-    u8 mbr[512];
-    u8 boot[512];
-    u8 sector[512];
-    u8 verify[512];
-
-    if (!disk_read_sector(0, mbr, disk))
-        return FAT16_WRITE_IO_ERROR;
-
-    if (mbr[510] != 0x55 || mbr[511] != 0xAA)
+    if (disk >= 4 || partition >= 4)
         return FAT16_WRITE_BAD_FS;
 
-    u32 partition_lba =
-        (u32)mbr[446 + 8] |
-        ((u32)mbr[446 + 9] << 8) |
-        ((u32)mbr[446 + 10] << 16) |
-        ((u32)mbr[446 + 11] << 24);
+    partinfo *part_info = &disktable[disk].parts[partition];
+
+    if (part_info->fs != fat16 || part_info->loc == 0 || part_info->loc > 0xFFFFFFFFULL)
+        return FAT16_WRITE_BAD_FS;
+
+    u32 partition_lba = (u32)part_info->loc;
 
     if (!disk_read_sector(partition_lba, boot, disk))
         return FAT16_WRITE_IO_ERROR;
@@ -1610,7 +1602,7 @@ int fat16_write_empty_file(
             ((u32)boot[35] << 24);
     }
     u64 partition_end = (u64)partition_lba + total_sectors;
-    if (partition_lba == 0 || total_sectors == 0 || partition_end > 0x100000000ULL || (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
+    if (partition_lba == 0 || total_sectors == 0 || (part_info->size != 0 && total_sectors > part_info->size) || partition_end > 0x100000000ULL || (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
         return FAT16_WRITE_BAD_FS;
 
     if (bytes_per_sector != 512 ||
@@ -1948,6 +1940,7 @@ int fat16_write_empty_file(
 }
 
 int fat16_replace_file(
+    unsigned int volume,
     const char name[11],
     const u8 *data,
     u32 length
@@ -1955,33 +1948,21 @@ int fat16_replace_file(
     if (!name || (length != 0 && !data))
         return FAT16_WRITE_BAD_FS;
 
-    if (!disktable || !volumes ||
-        disktable[0].parts[0].fs != fat16)
+    if (!name || volume >= LETTERS || !disktable || !volumes)
         return FAT16_WRITE_BAD_FS;
 
-    unsigned int disk = volumes[0].disk;
+    unsigned int disk = volumes[volume].disk;
+    unsigned int partition = volumes[volume].partition;
 
-    if (disk >= 4)
-        return FAT16_WRITE_BAD_FS;
-    if (fat_detect(disk) != 16)
-        return FAT16_WRITE_BAD_FS;
-
-    u8 mbr[512];
-    u8 boot[512];
-    u8 sector[512];
-    u8 verify[512];
-
-    if (!disk_read_sector(0, mbr, disk))
-        return FAT16_WRITE_IO_ERROR;
-
-    if (mbr[510] != 0x55 || mbr[511] != 0xAA)
+    if (disk >= 4 || partition >= 4)
         return FAT16_WRITE_BAD_FS;
 
-    u32 partition_lba =
-        (u32)mbr[446 + 8] |
-        ((u32)mbr[446 + 9] << 8) |
-        ((u32)mbr[446 + 10] << 16) |
-        ((u32)mbr[446 + 11] << 24);
+    partinfo *part_info = &disktable[disk].parts[partition];
+
+    if (part_info->fs != fat16 || part_info->loc == 0 || part_info->loc > 0xFFFFFFFFULL)
+        return FAT16_WRITE_BAD_FS;
+
+    u32 partition_lba = (u32)part_info->loc;
 
     if (!disk_read_sector(partition_lba, boot, disk))
         return FAT16_WRITE_IO_ERROR;
@@ -2018,7 +1999,7 @@ int fat16_replace_file(
             ((u32)boot[35] << 24);
     }
     u64 partition_end = (u64)partition_lba + total_sectors;
-    if (partition_lba == 0 || total_sectors == 0 || partition_end > 0x100000000ULL || (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
+    if (partition_lba == 0 || total_sectors == 0 || (part_info->size != 0 && total_sectors > part_info->size) || partition_end > 0x100000000ULL || (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
         return FAT16_WRITE_BAD_FS;
 
     if (bytes_per_sector != 512 ||
@@ -2195,7 +2176,7 @@ int fat16_replace_file(
         length > 0 &&
         length <= bytes_per_cluster) {
         free(new_clusters);
-        return fat16_write_empty_file(name, data, length);
+        return fat16_write_empty_file(volume, name, data, length);
     }
 
     if (old_cluster >= 2 &&
@@ -2703,33 +2684,24 @@ rollback:
     return failure_result;
 }
 
-int fat16_delete_file(const char name[11]) {
+int fat16_delete_file(unsigned int volume, const char name[11]) {
     diagnostics_log("remove: FAT16 delete routine entered.");
 
-    if (!name || !disktable || !volumes ||
-        disktable[0].parts[0].fs != fat16)
+    if (!name || volume >= LETTERS || !disktable || !volumes)
         return FAT16_WRITE_BAD_FS;
 
-    unsigned int disk = volumes[0].disk;
+    unsigned int disk = volumes[volume].disk;
+    unsigned int partition = volumes[volume].partition;
 
-    if (disk >= 4)
-        return FAT16_WRITE_BAD_FS;
-    if (fat_detect(disk) != 16)
-        return FAT16_WRITE_BAD_FS;
-
-    u8 mbr[512], boot[512], sector[512], verify[512];
-
-    if (!disk_read_sector(0, mbr, disk))
-        return FAT16_WRITE_IO_ERROR;
-
-    if (mbr[510] != 0x55 || mbr[511] != 0xAA)
+    if (disk >= 4 || partition >= 4)
         return FAT16_WRITE_BAD_FS;
 
-    u32 partition_lba =
-        (u32)mbr[454] |
-        ((u32)mbr[455] << 8) |
-        ((u32)mbr[456] << 16) |
-        ((u32)mbr[457] << 24);
+    partinfo *part_info = &disktable[disk].parts[partition];
+
+    if (part_info->fs != fat16 || part_info->loc == 0 || part_info->loc > 0xFFFFFFFFULL)
+        return FAT16_WRITE_BAD_FS;
+
+    u32 partition_lba = (u32)part_info->loc;
 
     if (!disk_read_sector(partition_lba, boot, disk))
         return FAT16_WRITE_IO_ERROR;
@@ -2756,7 +2728,7 @@ int fat16_delete_file(const char name[11]) {
             ((u32)boot[35] << 24);
     }
     u64 partition_end = (u64)partition_lba + total_sectors;
-    if (partition_lba == 0 || total_sectors == 0 || partition_end > 0x100000000ULL || (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
+    if (partition_lba == 0 || total_sectors == 0 || (part_info->size != 0 && total_sectors > part_info->size) || partition_end > 0x100000000ULL || (disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
         return FAT16_WRITE_BAD_FS;
 
     if (bytes_per_sector != 512 ||

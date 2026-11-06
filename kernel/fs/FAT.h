@@ -17,18 +17,20 @@
 #define FAT16_WRITE_DELETE_CLEANUP_ERROR -8
 
 int fat16_write_empty_file(
+    unsigned int volume,
     const char name[11],
     const u8 *data,
     u32 length
 );
 
 int fat16_replace_file(
+    unsigned int volume,
     const char name[11],
     const u8 *data,
     u32 length
 );
 
-int fat16_delete_file(const char name[11]);
+int fat16_delete_file(unsigned int volume, const char name[11]);
 
 typedef struct {
 	/* BPB */
