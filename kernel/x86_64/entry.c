@@ -561,7 +561,7 @@ static void shell_rm(const char *argument) {
         return;
     }
 
-    int result = fat16_delete_file(0, fat_name);
+    int result = fat16_delete_file(fat_name);
 
     if (result == FAT16_WRITE_OK) {
         terminal_write("remove: removed ");
@@ -737,7 +737,7 @@ static void shell_cp(const char *argument) {
         fclose(destination_fp);
     }
 
-    int result = fat16_replace_file(0, fat_name, buffer, length);
+    int result = fat16_replace_file(fat_name, buffer, length);
     free(buffer);
 
     if (result == FAT16_WRITE_OK) {
@@ -1168,7 +1168,6 @@ static void shell_ed(const char *argument) {
 
     {
         int result = fat16_replace_file(
-            0,
             fat_name,
             new_data,
             output_offset
@@ -1499,111 +1498,6 @@ static const char *shell_expand_first_word(const char *input, char *output, size
     return output;
 }
 
-static bool shell_wt_bytes_equal(const u8 *left, const u8 *right, u32 length) {
-    if (!left || !right)
-        return false;
-    for (u32 i = 0; i < length; ++i) {
-        if (left[i] != right[i])
-            return false;
-    }
-    return true;
-}
-
-static bool shell_wt_fat16_verify_file(const char *path, const u8 *expected, u32 length) {
-    FILE *fp = fopen((char *)path, 0);
-    if (!fp)
-        return false;
-    u8 buffer[700];
-    bool valid = fp->size == length;
-    if (valid && fread(buffer, length, fp) != length)
-        valid = false;
-    if (valid && !shell_wt_bytes_equal(buffer, expected, length))
-        valid = false;
-    fclose(fp);
-    return valid;
-}
-
-static bool shell_wt_fat16_write_test(void) {
-    static const u8 test_label[11] = {'A', 'N', 'G', 'O', 'S', ' ', 'T', 'E', 'S', 'T', ' '};
-    static const u8 test_id[8] = {'F', 'A', 'T', '1', '6', ' ', ' ', ' '};
-    static const char empty_name[11] = {'E', 'M', 'P', 'T', 'Y', ' ', ' ', ' ', 'T', 'X', 'T'};
-    u8 boot[512];
-    unsigned int test_volume = LETTERS;
-
-    if (!disktable || !volumes) {
-        terminal_write("watchtower FAT16 write test: no disk tables are available\n");
-        return false;
-    }
-
-    for (unsigned int i = 0; i < LETTERS; ++i) {
-        unsigned int disk = volumes[i].disk;
-        unsigned int partition = volumes[i].partition;
-        if (disk >= 4 || partition >= 4)
-            continue;
-        partinfo *info = &disktable[disk].parts[partition];
-        if (info->fs != fat16 || info->loc == 0)
-            continue;
-        if (!disk_read_sector(info->loc, boot, disk))
-            continue;
-        if (shell_wt_bytes_equal(boot + 43, test_label, sizeof(test_label)) &&
-            shell_wt_bytes_equal(boot + 54, test_id, sizeof(test_id))) {
-            test_volume = i;
-            break;
-        }
-    }
-
-    if (test_volume >= LETTERS) {
-        terminal_write("watchtower FAT16 write test: labelled test volume not found; no disk changes made\n");
-        return false;
-    }
-
-    char path[32] = {'|', (char)('A' + test_volume), '/', 'E', 'M', 'P', 'T', 'Y', '.', 'T', 'X', 'T', '\0'};
-    u8 initial_data[300];
-    u8 replacement_data[700];
-
-    for (u32 i = 0; i < sizeof(initial_data); ++i)
-        initial_data[i] = (u8)(0x31u + (i % 191u));
-    for (u32 i = 0; i < sizeof(replacement_data); ++i)
-        replacement_data[i] = (u8)(0xA7u ^ (i & 0xFFu));
-
-    int result = fat16_write_empty_file(test_volume, empty_name, initial_data, sizeof(initial_data));
-    if (result != FAT16_WRITE_OK) {
-        terminal_write("watchtower FAT16 write test: initial file write failed\n");
-        return false;
-    }
-    if (!shell_wt_fat16_verify_file(path, initial_data, sizeof(initial_data))) {
-        terminal_write("watchtower FAT16 write test: initial read-back failed\n");
-        return false;
-    }
-
-    result = fat16_replace_file(test_volume, empty_name, replacement_data, sizeof(replacement_data));
-    if (result != FAT16_WRITE_OK) {
-        terminal_write("watchtower FAT16 write test: multi-cluster replacement failed\n");
-        return false;
-    }
-    if (!shell_wt_fat16_verify_file(path, replacement_data, sizeof(replacement_data))) {
-        terminal_write("watchtower FAT16 write test: replacement read-back failed\n");
-        return false;
-    }
-
-    result = fat16_delete_file(test_volume, empty_name);
-    if (result != FAT16_WRITE_OK) {
-        terminal_write("watchtower FAT16 write test: file deletion failed\n");
-        return false;
-    }
-
-    FILE *remaining = fopen(path, 0);
-    if (remaining) {
-        fclose(remaining);
-        terminal_write("watchtower FAT16 write test: deleted file is still visible\n");
-        return false;
-    }
-
-    terminal_write("FAT16 WRITE, REPLACE AND DELETE OK\n");
-    terminal_write("watchtower FAT16 write test: PASS\n");
-    return true;
-}
-
 static void shell_wt(const char *argument) {
     char command[64];
     u32 length = 0;
@@ -1669,11 +1563,6 @@ static void shell_wt(const char *argument) {
     if (strcmp_local(sub, "memtest") == 0) {
         terminal_write("watchtower: running repeated memory and paging tests.\n");
         shell_wt_memory_test();
-        return;
-    }
-    if (strcmp_local(sub, "fatwrite") == 0) {
-        terminal_write("watchtower: running the guarded FAT16 write test.\n");
-        shell_wt_fat16_write_test();
         return;
     }
     if (strcmp_local(sub, "fscheck") == 0) {
@@ -1920,8 +1809,6 @@ static void shell_help(const char *topic) {
         terminal_write("  watchtower memtest | wt memtest\n");
         terminal_write("      Exercise repeated heap allocations, data integrity, virtual mappings\n");
         terminal_write("      and physical-page allocation and release.\n\n");
-        terminal_write("  watchtower fatwrite | wt fatwrite\n");
-        terminal_write("      Write, replace and delete a file on the labelled FAT16 test volume.\n\n");
         terminal_write("  watchtower fscheck | wt fscheck\n");
         terminal_write("      Run read-only disk, filesystem and root-directory checks.\n\n");
         terminal_write("  watchtower report | wt rp\n");
