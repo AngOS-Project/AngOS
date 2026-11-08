@@ -5,6 +5,7 @@
 #include <string.h>
 #include <FS.h>
 #include "FAT.h"
+#include "FATCore.h"
 #include <terminal.h>
 
 static void wcatomba(u8 *dest, const wchar *src, size_t count) {
@@ -24,6 +25,9 @@ bool fat_setup(unsigned int disk, unsigned int part) {
         return false;
     }
     partinfo *info = &disktable[disk].parts[part];
+    fat_native_volume native;
+    if (!fat_native_mount(&native, disk, part) || native.fat_bits != FAT_NATIVE_FAT32)
+        return false;
     bootrecord BPB;
     u32 FAT_buffer[SECTOR_SIZE / sizeof(u32)];
     if (!readsectorpio(info->loc, 1, &BPB, disk)) {
@@ -39,7 +43,7 @@ bool fat_setup(unsigned int disk, unsigned int part) {
     fs_info.bytes_per_sector = BPB.bytes_per_sector;
     fs_info.sectors_per_cluster = BPB.sectors_per_cluster;
     fs_info.sectors_per_fat = BPB.sectors_per_FAT;
-    fs_info.root_cluster = BPB.root_cluster;
+    fs_info.root_cluster = BPB.root_cluster & 0x0FFFFFFFU;
     fs_info.root_entries = BPB.root_entries;
     fs_info.root_sectors = (fs_info.root_entries * 32 + fs_info.bytes_per_sector - 1) / fs_info.bytes_per_sector;
     fs_info.fat_count = BPB.FAT_count;
@@ -60,7 +64,12 @@ bool fat_setup(unsigned int disk, unsigned int part) {
         diagnostics_log("FAT32 setup: FAT or data region exceeds the volume bounds.");
         return false;
     }
-    fs_info.fat = (u32)fat_start;
+    u64 active_fat_start = fat_start;
+    if (!native.mirrored)
+        active_fat_start += (u64)native.active_fat * native.fat_sectors;
+    if (active_fat_start > 0xFFFFFFFFULL)
+        return false;
+    fs_info.fat = (u32)active_fat_start;
     fs_info.data = (u32)(data_start - (u64)2 * fs_info.sectors_per_cluster);
     u32 max_clusters = (fs_info.sector_count - (u32)data_start) / fs_info.sectors_per_cluster;
     if (max_clusters == 0 || (u64)max_clusters + 2 > (u64)fs_info.sectors_per_fat * FEPS) {
@@ -978,101 +987,14 @@ bool fat_filesize(FILE *fp, unsigned long long *size) {
 }
 
 int fat_detect(unsigned int disk) {
-    if (disk >= 4)
-        return 0;
-    u8 mbr[512];
-    u8 boot[512];
-
-    if (!disk_read_sector(0, mbr, disk))
+    if (disk >= 4 || !disktable)
         return 0;
 
-    if (mbr[510] != 0x55 || mbr[511] != 0xAA)
+    fat_native_volume volume;
+    if (!fat_native_mount(&volume, disk, 0))
         return 0;
 
-    u8 partition_type = mbr[446 + 4];
-
-    u32 partition_lba =
-        (u32)mbr[446 + 8] |
-        ((u32)mbr[446 + 9] << 8) |
-        ((u32)mbr[446 + 10] << 16) |
-        ((u32)mbr[446 + 11] << 24);
-
-    if (partition_lba == 0)
-        return 0;
-
-    if (!disk_read_sector(partition_lba, boot, disk))
-        return 0;
-
-    if (boot[510] != 0x55 || boot[511] != 0xAA)
-        return 0;
-
-    u16 bytes_per_sector =
-        (u16)boot[11] |
-        ((u16)boot[12] << 8);
-
-    u8 sectors_per_cluster = boot[13];
-    u16 reserved_sectors =
-        (u16)boot[14] |
-        ((u16)boot[15] << 8);
-
-    u8 fat_count = boot[16];
-
-    if (bytes_per_sector != 512)
-        return 0;
-
-    if (sectors_per_cluster == 0)
-        return 0;
-
-    if (reserved_sectors == 0)
-        return 0;
-
-    if (fat_count == 0)
-        return 0;
-
-    u32 volume_sectors = (u32)boot[19] | ((u32)boot[20] << 8);
-    if (volume_sectors == 0)
-        volume_sectors = (u32)boot[32] | ((u32)boot[33] << 8) | ((u32)boot[34] << 16) | ((u32)boot[35] << 24);
-    u64 partition_end = (u64)partition_lba + volume_sectors;
-    if (sectors_per_cluster > 128 || (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 || volume_sectors == 0 || partition_end > 0x100000000ULL || (disktable && disktable[disk].blocks != 0 && partition_end > disktable[disk].blocks))
-        return 0;
-
-    if (partition_type == 0x01)
-        return 12;
-
-    if (partition_type == 0x06 || partition_type == 0x0E) {
-        u16 sectors_per_fat =
-            (u16)boot[22] |
-            ((u16)boot[23] << 8);
-
-        if (sectors_per_fat == 0)
-            return 0;
-
-        return 16;
-    }
-
-    if (partition_type == 0x0B || partition_type == 0x0C || partition_type == 0xEF) {
-        u32 sectors_per_fat =
-            (u32)boot[36] |
-            ((u32)boot[37] << 8) |
-            ((u32)boot[38] << 16) |
-            ((u32)boot[39] << 24);
-
-        u32 root_cluster =
-            (u32)boot[44] |
-            ((u32)boot[45] << 8) |
-            ((u32)boot[46] << 16) |
-            ((u32)boot[47] << 24);
-
-        if (sectors_per_fat == 0)
-            return 0;
-
-        if (root_cluster < 2)
-            return 0;
-
-        return 32;
-    }
-
-    return 0;
+    return (int)volume.fat_bits;
 }
 
 bool fat_probe(unsigned int disk) {
@@ -2704,6 +2626,11 @@ rollback:
 }
 
 int fat16_delete_file(const char name[11]) {
+    u8 boot[SECTOR_SIZE];
+    u8 sector[SECTOR_SIZE];
+    u8 verify[SECTOR_SIZE];
+
+
     diagnostics_log("remove: FAT16 delete routine entered.");
 
     if (!name || !disktable || !volumes ||

@@ -35,6 +35,7 @@ KERNEL_C := \
     kernel/libc/kernel.c \
     kernel/libc/mem.c \
     kernel/disk/PIO.c \
+    kernel/fs/FATCore.c \
     kernel/fs/FAT.c \
     kernel/fs/FS.c
 
@@ -133,3 +134,9 @@ run-fat16: deploy
 		-drive if=ide,index=0,media=disk,format=raw,file=build/fat32-test-disk.img \
 		-drive if=ide,index=1,media=disk,format=raw,file=build/fat16-test-disk.img \
 		-boot order=c -m 512M -no-reboot -d int,cpu_reset -D qemu/qemu-fat16.log
+.PHONY: test-fat-core
+test-fat-core:
+	@mkdir -p $(BUILD)
+	$(CC) -std=c11 -Wall -Wextra -Werror -Itools/fat-native-tests/include -Ikernel/fs kernel/fs/FATCore.c tools/fat-native-tests/fat_native_core_test.c -o $(BUILD)/fat_native_core_test.exe
+	$(BUILD)/fat_native_core_test.exe
+
