@@ -2,6 +2,8 @@
 #define ANGOS_TEST_DISK_H
 #include <types.h>
 #define SECTOR_SIZE 512
+#define LETTERS 26
+#define MAX_OPEN_FILES 0x100
 typedef enum { none, fat12, fat16, fat32 } FS;
 typedef struct { u64 loc; u64 size; FS fs; void *fsdata; } partinfo;
 typedef struct { u64 blocks; partinfo parts[4]; } diskdata;
