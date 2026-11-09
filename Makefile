@@ -36,6 +36,7 @@ KERNEL_C := \
     kernel/libc/mem.c \
     kernel/disk/PIO.c \
     kernel/fs/FATCore.c \
+    kernel/fs/FATNode.c \
     kernel/fs/FAT.c \
     kernel/fs/FS.c
 
@@ -53,7 +54,7 @@ KERNEL_ASM_OBJS := \
 
 KERNEL_OBJS := $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS)
 
-.PHONY: all kernel uefi clean
+.PHONY: all kernel uefi clean deploy run run-fat32 run-fat16 test-fat-core test-fat-node test-fs-api
 
 all: kernel uefi
 
@@ -104,7 +105,6 @@ run: deploy
 		-d int,cpu_reset \
 		-D qemu/qemu.log
 
-
 .PHONY: run-fat32
 run-fat32: deploy
 	@mkdir -p build
@@ -134,9 +134,18 @@ run-fat16: deploy
 		-drive if=ide,index=0,media=disk,format=raw,file=build/fat32-test-disk.img \
 		-drive if=ide,index=1,media=disk,format=raw,file=build/fat16-test-disk.img \
 		-boot order=c -m 512M -no-reboot -d int,cpu_reset -D qemu/qemu-fat16.log
-.PHONY: test-fat-core
+
 test-fat-core:
 	@mkdir -p $(BUILD)
 	$(CC) -std=c11 -Wall -Wextra -Werror -Itools/fat-native-tests/include -Ikernel/fs kernel/fs/FATCore.c tools/fat-native-tests/fat_native_core_test.c -o $(BUILD)/fat_native_core_test.exe
 	$(BUILD)/fat_native_core_test.exe
 
+test-fat-node:
+	@mkdir -p $(BUILD)
+	$(CC) -std=c11 -Wall -Wextra -Werror -fno-builtin -Itools/fat-node-tests/include -Ikernel/fs kernel/fs/FATNode.c tools/fat-node-tests/fat_node_test.c -o $(BUILD)/fat_node_test.exe
+	$(BUILD)/fat_node_test.exe
+
+test-fs-api:
+	@mkdir -p $(BUILD)
+	$(CC) -std=c11 -Wall -Wextra -Werror -fno-builtin -Itools/fat-node-tests/include -Ikernel/include -Ikernel/fs kernel/fs/FATNode.c kernel/fs/FS.c tools/fat-node-tests/fs_api_test.c -o $(BUILD)/fat_fs_api_test.exe
+	$(BUILD)/fat_fs_api_test.exe
