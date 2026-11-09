@@ -22,6 +22,10 @@ typedef struct FILE {
     size_t pointer;
     u8 volume;
     unsigned long long size;
+    u32 native_first_cluster;
+    u8 native_attributes;
+    u8 native;
+    u16 native_reserved;
 } FILE;
 
 typedef struct dirent {
