@@ -1,0 +1,10 @@
+#ifndef ANGOS_FAT_WRITE_TEST_TYPES_H
+#define ANGOS_FAT_WRITE_TEST_TYPES_H
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+#endif
