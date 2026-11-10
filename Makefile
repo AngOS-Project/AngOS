@@ -37,6 +37,7 @@ KERNEL_C := \
     kernel/disk/PIO.c \
     kernel/fs/FATCore.c \
     kernel/fs/FATNode.c \
+    kernel/fs/FATWrite.c \
     kernel/fs/FAT.c \
     kernel/fs/FS.c
 
@@ -54,7 +55,7 @@ KERNEL_ASM_OBJS := \
 
 KERNEL_OBJS := $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS)
 
-.PHONY: all kernel uefi clean deploy run run-fat32 run-fat16 test-fat-core test-fat-node test-fs-api
+.PHONY: all kernel uefi clean deploy run run-fat32 run-fat16 test-fat-core test-fat-node test-fs-api test-fat-write
 
 all: kernel uefi
 
@@ -149,3 +150,8 @@ test-fs-api:
 	@mkdir -p $(BUILD)
 	$(CC) -std=c11 -Wall -Wextra -Werror -fno-builtin -Itools/fat-node-tests/include -Ikernel/include -Ikernel/fs kernel/fs/FATNode.c kernel/fs/FS.c tools/fat-node-tests/fs_api_test.c -o $(BUILD)/fat_fs_api_test.exe
 	$(BUILD)/fat_fs_api_test.exe
+
+test-fat-write:
+	@mkdir -p $(BUILD)
+	$(CC) -std=c11 -Wall -Wextra -Werror -fno-builtin -Itools/fat-write-tests/include -Ikernel/fs kernel/fs/FATWrite.c tools/fat-write-tests/fat_write_test.c -o $(BUILD)/fat_write_test.exe
+	$(BUILD)/fat_write_test.exe
