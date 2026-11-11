@@ -5,6 +5,7 @@
 #include <FS.h>
 #include "FAT.h"
 #include "FATNode.h"
+#include "FATWrite.h"
 
 #define MAX_OPEN_DIRS 32
 #define MAX_PATH_COMPONENTS 15
@@ -205,7 +206,13 @@ static fat_node_fs *fs_native_filesystem(u8 volume) {
 }
 
 FILE *fopen(char *path, u8 flags) {
-    (void)flags;
+    u8 mode = flags;
+    if (mode == 0)
+        mode = FOPEN_READ;
+    if ((mode & ~(FOPEN_READ | FOPEN_WRITE | FOPEN_CREATE | FOPEN_TRUNCATE | FOPEN_APPEND)) != 0 ||
+        !(mode & (FOPEN_READ | FOPEN_WRITE)) ||
+        ((mode & (FOPEN_CREATE | FOPEN_TRUNCATE | FOPEN_APPEND)) && !(mode & FOPEN_WRITE)))
+        return 0;
     u8 volume;
     const char *relative;
     char **components = 0;
@@ -226,23 +233,59 @@ FILE *fopen(char *path, u8 flags) {
     fp->path = components;
     fp->path_count = component_count;
     fp->volume = volume;
+    fp->mode = mode;
     char node_path[FILENAME_LENGTH];
     fat_node node;
     fat_node_fs *filesystem = fs_native_filesystem(volume);
-    if (!filesystem || !fs_join_file_path(fp, node_path) ||
-        !fat_node_lookup(filesystem, node_path, &node) ||
-        (node.attributes & 0x10U)) {
-        fp->used = 0;
-        fp->path = 0;
-        fp->path_count = 0;
-        fs_free_path(components, component_count);
-        return 0;
+    if (!filesystem || !fs_join_file_path(fp, node_path))
+        goto fail;
+    bool found = fat_node_lookup(filesystem, node_path, &node);
+    if (found && (node.attributes & 0x10U))
+        goto fail;
+    if (!found && (!(mode & FOPEN_WRITE) || (!(mode & FOPEN_CREATE) && !(mode & FOPEN_APPEND))))
+        goto fail;
+    if (found && (mode & FOPEN_WRITE) && (node.attributes & 0x01U))
+        goto fail;
+    u32 initial_size = found ? node.size : 0;
+    if (mode & FOPEN_TRUNCATE)
+        initial_size = 0;
+    u8 *write_buffer = 0;
+    u32 write_capacity = 0;
+    if ((mode & FOPEN_WRITE) && initial_size != 0) {
+        write_buffer = malloc(initial_size);
+        if (!write_buffer)
+            goto fail;
+        write_capacity = initial_size;
+        if (!(mode & FOPEN_TRUNCATE)) {
+            size_t loaded = 0;
+            if (!found || !fat_node_read(filesystem, &node, 0, write_buffer, initial_size, &loaded) || loaded != initial_size) {
+                free(write_buffer);
+                goto fail;
+            }
+        } else {
+            memset(write_buffer, 0, initial_size);
+        }
     }
-    fp->size = node.size;
-    fp->native_first_cluster = node.first_cluster;
-    fp->native_attributes = node.attributes;
+    fp->size = initial_size;
+    fp->native_first_cluster = found ? node.first_cluster : 0;
+    fp->native_attributes = found ? node.attributes : 0x20U;
     fp->native = 1;
+    fp->write_buffer = write_buffer;
+    fp->write_capacity = write_capacity;
+    fp->write_pending = (mode & FOPEN_WRITE) && (!found || (mode & FOPEN_TRUNCATE));
+    fp->pointer = (mode & FOPEN_APPEND) ? initial_size : 0;
     return fp;
+
+fail:
+    if (fp->write_buffer)
+        free(fp->write_buffer);
+    fp->used = 0;
+    fp->path = 0;
+    fp->path_count = 0;
+    fp->write_buffer = 0;
+    fs_free_path(components, component_count);
+    memset(fp, 0, sizeof(*fp));
+    return 0;
 }
 
 int aligncheck(FILE *fp) {
@@ -252,16 +295,37 @@ int aligncheck(FILE *fp) {
 int fclose(FILE *fp) {
     if (!fs_file_is_open(fp))
         return 1;
+    int result = 0;
+    if ((fp->mode & FOPEN_WRITE) && fp->write_pending) {
+        char node_path[FILENAME_LENGTH];
+        fat_node_fs *filesystem = fs_native_filesystem(fp->volume);
+        if (!filesystem || !fs_join_file_path(fp, node_path) || fp->size > 0xFFFFFFFFULL) {
+            result = -1;
+        } else {
+            int write_result = fat_node_write_file(filesystem, node_path, fp->write_buffer, (u32)fp->size);
+            if (write_result != FAT_WRITE_OK)
+                result = -1;
+        }
+    }
+    if (fp->write_buffer)
+        free(fp->write_buffer);
     fs_free_path(fp->path, fp->path_count);
     memset(fp, 0, sizeof(*fp));
-    return 0;
+    return result;
 }
 
 size_t fread(void *ptr, size_t bytes, FILE *fp) {
-    if (!ptr || !fs_file_is_open(fp) || !fp->native || bytes == 0 || fp->pointer >= fp->size)
+    if (!ptr || !fs_file_is_open(fp) || !(fp->mode & FOPEN_READ) || bytes == 0 || fp->pointer >= fp->size)
         return 0;
     if ((u64)bytes > fp->size - fp->pointer)
         bytes = (size_t)(fp->size - fp->pointer);
+    if (fp->mode & FOPEN_WRITE) {
+        if (!fp->write_buffer)
+            return 0;
+        memcpy(ptr, fp->write_buffer + fp->pointer, bytes);
+        fp->pointer += bytes;
+        return bytes;
+    }
     fat_node_fs *filesystem = fs_native_filesystem(fp->volume);
     if (!filesystem)
         return 0;
@@ -279,14 +343,55 @@ size_t fread(void *ptr, size_t bytes, FILE *fp) {
     return read_count;
 }
 
+size_t fwrite(const void *ptr, size_t bytes, FILE *fp) {
+    if (!ptr || !fs_file_is_open(fp) || !(fp->mode & FOPEN_WRITE) || bytes == 0)
+        return 0;
+    if (fp->mode & FOPEN_APPEND)
+        fp->pointer = (size_t)fp->size;
+    u64 end = (u64)fp->pointer + (u64)bytes;
+    if (end > 0xFFFFFFFFULL)
+        return 0;
+    u32 required = (u32)end;
+    if (required > fp->write_capacity) {
+        u32 capacity = fp->write_capacity ? fp->write_capacity : 64U;
+        while (capacity < required) {
+            if (capacity > 0x7FFFFFFFU) {
+                capacity = required;
+                break;
+            }
+            capacity *= 2U;
+        }
+        u8 *replacement = malloc(capacity);
+        if (!replacement)
+            return 0;
+        memset(replacement, 0, capacity);
+        if (fp->size != 0 && fp->write_buffer)
+            memcpy(replacement, fp->write_buffer, (size_t)fp->size);
+        if (fp->write_buffer)
+            free(fp->write_buffer);
+        fp->write_buffer = replacement;
+        fp->write_capacity = capacity;
+    }
+    if (fp->pointer > fp->size)
+        memset(fp->write_buffer + fp->size, 0, (size_t)(fp->pointer - fp->size));
+    memcpy(fp->write_buffer + fp->pointer, ptr, bytes);
+    fp->pointer = (size_t)end;
+    if (end > fp->size)
+        fp->size = end;
+    fp->write_pending = 1;
+    return bytes;
+}
+
 int fseek(FILE *fp, long long offset, fpos_t position) {
     if (!fs_file_is_open(fp))
         return -1;
-    if (fp->pointer > fp->size)
+    bool writable = (fp->mode & FOPEN_WRITE) != 0;
+    u64 limit = writable ? 0xFFFFFFFFULL : fp->size;
+    if (fp->pointer > fp->size && !writable)
         return -2;
     switch (position) {
         case SEEK_SET:
-            if (offset < 0 || (u64)offset > fp->size)
+            if (offset < 0 || (u64)offset > limit)
                 return -2;
             fp->pointer = (u64)offset;
             break;
@@ -298,19 +403,22 @@ int fseek(FILE *fp, long long offset, fpos_t position) {
                 fp->pointer -= distance;
             } else {
                 u64 distance = (u64)offset;
-                if (distance > fp->size - fp->pointer)
+                if (distance > limit - fp->pointer)
                     return -2;
                 fp->pointer += distance;
             }
             break;
         case SEEK_END:
-            if (offset > 0)
-                return -2;
-            {
+            if (offset < 0) {
                 u64 distance = (u64)(-(offset + 1)) + 1U;
                 if (distance > fp->size)
                     return -2;
                 fp->pointer = fp->size - distance;
+            } else {
+                u64 distance = (u64)offset;
+                if (distance > limit - fp->size)
+                    return -2;
+                fp->pointer = fp->size + distance;
             }
             break;
         default:

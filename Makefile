@@ -148,7 +148,7 @@ test-fat-node:
 
 test-fs-api:
 	@mkdir -p $(BUILD)
-	$(CC) -std=c11 -Wall -Wextra -Werror -fno-builtin -Itools/fat-node-tests/include -Ikernel/include -Ikernel/fs kernel/fs/FATNode.c kernel/fs/FS.c tools/fat-node-tests/fs_api_test.c -o $(BUILD)/fat_fs_api_test.exe
+	$(CC) -std=c11 -Wall -Wextra -Werror -fno-builtin -Itools/fat-node-tests/include -Ikernel/include -Ikernel/fs kernel/fs/FATNode.c kernel/fs/FATWrite.c kernel/fs/FS.c tools/fat-node-tests/fs_api_test.c -o $(BUILD)/fat_fs_api_test.exe
 	$(BUILD)/fat_fs_api_test.exe
 
 test-fat-write:

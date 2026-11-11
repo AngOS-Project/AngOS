@@ -49,7 +49,7 @@ int fat_native_chain_next(const fat_native_volume *volume, u32 cluster, u32 *nex
     if (!volume || !next_cluster || cluster < 2 || cluster >= MAX_CLUSTERS)
         return FAT_NATIVE_CHAIN_ERROR;
     u32 next = links[cluster];
-    if (next == 0) {
+    if (next == 0 || next >= 0xFFF8U) {
         *next_cluster = 0;
         return FAT_NATIVE_CHAIN_END;
     }
@@ -57,6 +57,70 @@ int fat_native_chain_next(const fat_native_volume *volume, u32 cluster, u32 *nex
         return FAT_NATIVE_CHAIN_ERROR;
     *next_cluster = next;
     return FAT_NATIVE_CHAIN_NEXT;
+}
+
+bool fat_native_fat_read(const fat_native_volume *volume, u32 cluster, u32 *value) {
+    if (!volume || !value || cluster < 2 || cluster >= MAX_CLUSTERS)
+        return false;
+    *value = links[cluster];
+    return true;
+}
+
+bool fat_native_fat_write(const fat_native_volume *volume, u32 cluster, u32 value) {
+    if (!volume || cluster < 2 || cluster >= MAX_CLUSTERS)
+        return false;
+    links[cluster] = value;
+    return true;
+}
+
+bool fat_native_allocate_chain(fat_native_volume *volume, u32 count, u32 *first_cluster) {
+    if (!volume || !first_cluster || count == 0 || count > volume->cluster_count)
+        return false;
+    u32 first = 0;
+    u32 previous = 0;
+    u32 allocated = 0;
+    for (u32 cluster = 2; cluster <= volume->cluster_count + 1 && allocated < count; ++cluster) {
+        if (cluster >= MAX_CLUSTERS)
+            break;
+        if (links[cluster] != 0)
+            continue;
+        if (first == 0)
+            first = cluster;
+        if (previous != 0)
+            links[previous] = cluster;
+        previous = cluster;
+        ++allocated;
+    }
+    if (allocated != count) {
+        u32 current = first;
+        for (u32 i = 0; i < allocated; ++i) {
+            u32 next = links[current];
+            links[current] = 0;
+            current = next;
+        }
+        return false;
+    }
+    links[previous] = 0xFFFFU;
+    *first_cluster = first;
+    return true;
+}
+
+bool fat_native_release_chain(const fat_native_volume *volume, u32 first_cluster) {
+    if (!volume || first_cluster < 2 || first_cluster > volume->cluster_count + 1)
+        return false;
+    u32 current = first_cluster;
+    for (u32 step = 0; step < volume->cluster_count; ++step) {
+        if (current < 2 || current >= MAX_CLUSTERS)
+            return false;
+        u32 next = links[current];
+        links[current] = 0;
+        if (next == 0 || next >= 0xFFF8U)
+            return true;
+        if (next < 2 || next > volume->cluster_count + 1)
+            return false;
+        current = next;
+    }
+    return false;
 }
 
 int fat16_dir_read(DIR *dir) {
@@ -141,6 +205,9 @@ static void prepare(void) {
     memset(&image[14][32], 0, 32);
     memcpy(image[11], "hello", 5);
     memcpy(image[16], "abc", 3);
+    links[5] = 0xFFFFU;
+    links[8] = 0xFFFFU;
+    links[10] = 0xFFFFU;
 }
 
 int main(void) {
@@ -179,6 +246,31 @@ int main(void) {
     entry = directory ? readdir(directory) : 0;
     check(entry && strcmp(entry->name, "INNER.TXT") == 0, "nested directory enumeration");
     check(directory && closedir(directory) == 0, "nested directory close");
+    file = fopen("|A/NEW.TXT", FOPEN_WRITE | FOPEN_CREATE);
+    check(file != 0, "fopen creates a new file for writing");
+    check(file && fwrite("new-data", 8, file) == 8, "fwrite writes new file contents");
+    check(file && fclose(file) == 0, "fclose commits new file");
+    file = fopen("|A/NEW.TXT", 0);
+    memset(data, 0, sizeof(data));
+    check(file && fsize(file) == 8 && fread(data, 8, file) == 8 && memcmp(data, "new-data", 8) == 0, "created file can be reopened and read");
+    check(file && fclose(file) == 0, "created file read handle closes");
+    file = fopen("|A/DOC.TXT", FOPEN_WRITE | FOPEN_APPEND);
+    check(file != 0, "fopen opens existing file in append mode");
+    check(file && fwrite("!", 1, file) == 1, "fwrite appends to existing contents");
+    check(file && fclose(file) == 0, "fclose commits appended contents");
+    file = fopen("|A/DOC.TXT", 0);
+    memset(data, 0, sizeof(data));
+    check(file && fsize(file) == 6 && fread(data, 6, file) == 6 && memcmp(data, "hello!", 6) == 0, "append preserves old data and adds new data");
+    check(file && fclose(file) == 0, "appended file read handle closes");
+    file = fopen("|A/DOC.TXT", FOPEN_WRITE | FOPEN_TRUNCATE);
+    check(file && fsize(file) == 0, "truncate mode starts with an empty file");
+    check(file && fwrite("replacement", 11, file) == 11, "fwrite replaces file contents");
+    check(file && fclose(file) == 0, "fclose commits replacement contents");
+    file = fopen("|A/DOC.TXT", 0);
+    memset(data, 0, sizeof(data));
+    check(file && fsize(file) == 11 && fread(data, 11, file) == 11 && memcmp(data, "replacement", 11) == 0, "replaced file can be reopened and read");
+    check(links[5] == 0, "replacement releases the previous cluster chain");
+    check(file && fclose(file) == 0, "replaced file read handle closes");
     printf("%s: %d failed checks\n", failures ? "FAILED" : "ALL FS API TESTS PASSED", failures);
     return failures ? 1 : 0;
 }
