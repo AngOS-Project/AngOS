@@ -2644,7 +2644,7 @@ int fat16_delete_file(const char name[11]) {
     if (fat_detect(disk) != 16)
         return FAT16_WRITE_BAD_FS;
 
-    u8 mbr[512], boot[512], sector[512], verify[512];
+    u8 mbr[SECTOR_SIZE];
 
     if (!disk_read_sector(0, mbr, disk))
         return FAT16_WRITE_IO_ERROR;
