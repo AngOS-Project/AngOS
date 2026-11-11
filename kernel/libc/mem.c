@@ -20,6 +20,20 @@ void *memcpy(void *dest, const void *src, size_t count) {
     return dest;
 }
 
+int memcmp(const void *a, const void *b, size_t count) {
+    const unsigned char *x = a;
+    const unsigned char *y = b;
+
+    while (count--) {
+        if (*x != *y)
+            return (int)*x - (int)*y;
+        ++x;
+        ++y;
+    }
+
+    return 0;
+}
+
 int strcmp(const char *a, const char *b) {
     while (*a && *a == *b) {
         ++a;
