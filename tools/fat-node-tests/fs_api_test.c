@@ -271,11 +271,9 @@ int main(void) {
     check(file && fsize(file) == 11 && fread(data, 11, file) == 11 && memcmp(data, "replacement", 11) == 0, "replaced file can be reopened and read");
     check(links[5] == 0, "replacement releases the previous cluster chain");
     if (file) {
-        printf("DEBUG FILE: used=%u path=%p path_count=%u mode=%u pending=%u size=%llu pointer=%zu\\n",
-            file->used, (void *)file->path, file->path_count,
-            file->mode, file->write_pending, file->size, file->pointer);
+        printf("DEBUG: before final fclose\n");
         int close_result = fclose(file);
-        printf("DEBUG fclose result: %d\\n", close_result);
+        printf("DEBUG: after final fclose\n");
         check(close_result == 0, "replaced file read handle closes");
     } else {
         check(false, "replaced file read handle closes");
