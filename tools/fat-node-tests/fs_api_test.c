@@ -273,7 +273,7 @@ int main(void) {
     if (file) {
         printf("DEBUG: before final fclose\n");
         int close_result = fclose(file);
-        printf("DEBUG: after final fclose\n");
+        printf("DEBUG: after final fclose, result=%d\n", close_result);
         check(close_result == 0, "replaced file read handle closes");
     } else {
         check(false, "replaced file read handle closes");
