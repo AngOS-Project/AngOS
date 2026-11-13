@@ -214,7 +214,7 @@ int main(void) {
     prepare();
     FILE *file = fopen("|A/DOC.TXT", 0);
     check(file != 0 && fsize(file) == 5, "fopen and fsize through native FAT layer");
-    char data[8] = {0};
+    char data[16] = {0};
     check(fread(data, 2, file) == 2 && memcmp(data, "he", 2) == 0, "fread initial segment");
     check(fseek(file, 1, SEEK_SET) == 0, "fseek absolute position");
     memset(data, 0, sizeof(data));
@@ -270,14 +270,7 @@ int main(void) {
     memset(data, 0, sizeof(data));
     check(file && fsize(file) == 11 && fread(data, 11, file) == 11 && memcmp(data, "replacement", 11) == 0, "replaced file can be reopened and read");
     check(links[5] == 0, "replacement releases the previous cluster chain");
-    if (file) {
-        printf("DEBUG: before final fclose\n");
-        int close_result = fclose(file);
-        printf("DEBUG: after final fclose, result=%d\n", close_result);
-        check(close_result == 0, "replaced file read handle closes");
-    } else {
-        check(false, "replaced file read handle closes");
-    }
+    check(file && fclose(file) == 0, "replaced file read handle closes");
     printf("%s: %d failed checks\n", failures ? "FAILED" : "ALL FS API TESTS PASSED", failures);
     return failures ? 1 : 0;
 }
