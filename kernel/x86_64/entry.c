@@ -1433,6 +1433,96 @@ static bool shell_wt_filesystem_test(void) {
     diagnostics_log("Watchtower filesystem test: disk probe, sector read, FAT detection and root-directory traversal passed.");
     return true;
 }
+
+static bool shell_wt_verify_written_file(char *path, const char *expected, u32 expected_size) {
+    FILE *fp = fopen(path, FOPEN_READ);
+    if (!fp)
+        return false;
+
+    u8 buffer[2048];
+    bool valid = expected_size <= sizeof(buffer) && fp->size == expected_size;
+    size_t count = valid ? fread(buffer, expected_size, fp) : 0;
+
+    if (valid)
+        valid = count == expected_size && memcmp(buffer, expected, expected_size) == 0;
+
+    int close_result = fclose(fp);
+    return valid && close_result == 0;
+}
+
+static bool shell_wt_fatwrite_test(void) {
+    if (!disktable || !volumes || volumes[1].disk >= 4 || volumes[1].partition >= 4 ||
+        disktable[volumes[1].disk].parts[volumes[1].partition].fs != fat16) {
+        terminal_write("FAT write test: volume B is not a mounted FAT16 volume\n");
+        return false;
+    }
+
+    char path[] = "|B/WTWRITE.TXT";
+    char initial[1300];
+    char combined[1600];
+    static const char appended[] = " + appended contents.";
+    static const char replacement[] = "AngOS native FAT replacement contents verified.";
+
+    for (u32 i = 0; i < sizeof(initial); ++i)
+        initial[i] = (char)('A' + (i % 26));
+
+    FILE *fp = fopen(path, FOPEN_WRITE | FOPEN_CREATE | FOPEN_TRUNCATE);
+    if (!fp) {
+        terminal_write("FAT write test: file creation failed\n");
+        return false;
+    }
+
+    size_t written = fwrite(initial, sizeof(initial), fp);
+    int close_result = fclose(fp);
+
+    if (written != sizeof(initial) || close_result != 0 ||
+        !shell_wt_verify_written_file(path, initial, sizeof(initial))) {
+        terminal_write("FAT write test: multi-cluster creation or read-back failed\n");
+        return false;
+    }
+
+    terminal_write("FAT write test: create, allocate and read-back PASS\n");
+
+    memcpy(combined, initial, sizeof(initial));
+    memcpy(combined + sizeof(initial), appended, sizeof(appended) - 1);
+
+    fp = fopen(path, FOPEN_WRITE | FOPEN_APPEND);
+    if (!fp) {
+        terminal_write("FAT write test: append open failed\n");
+        return false;
+    }
+
+    written = fwrite(appended, sizeof(appended) - 1, fp);
+    close_result = fclose(fp);
+
+    if (written != sizeof(appended) - 1 || close_result != 0 ||
+        !shell_wt_verify_written_file(path, combined, sizeof(initial) + sizeof(appended) - 1)) {
+        terminal_write("FAT write test: append or verification failed\n");
+        return false;
+    }
+
+    terminal_write("FAT write test: append and read-back PASS\n");
+
+    fp = fopen(path, FOPEN_WRITE | FOPEN_TRUNCATE);
+    if (!fp) {
+        terminal_write("FAT write test: replacement open failed\n");
+        return false;
+    }
+
+    written = fwrite(replacement, sizeof(replacement) - 1, fp);
+    close_result = fclose(fp);
+
+    if (written != sizeof(replacement) - 1 || close_result != 0 ||
+        !shell_wt_verify_written_file(path, replacement, sizeof(replacement) - 1)) {
+        terminal_write("FAT write test: replacement or verification failed\n");
+        return false;
+    }
+
+    terminal_write("FAT write test: replacement and read-back PASS\n");
+    diagnostics_log("Native FAT write test passed: multi-cluster creation, append, replacement and read-back on volume B.");
+    return true;
+}
+
 typedef struct {
     const char *full;
     const char *alias;
@@ -1571,6 +1661,14 @@ static void shell_wt(const char *argument) {
             terminal_write("watchtower filesystem check: FAILED\n");
         else
             terminal_write("watchtower filesystem check: PASS\n");
+        return;
+    }
+    if (strcmp_local(sub, "fatwrite") == 0) {
+        terminal_write("watchtower: testing native FAT writes on volume B.\n");
+        if (shell_wt_fatwrite_test())
+            terminal_write("watchtower FAT write test: PASS\n");
+        else
+            terminal_write("watchtower FAT write test: FAILED\n");
         return;
     }
     if (strcmp_local(sub, "report") == 0 || strcmp_local(sub, "rp") == 0) {
@@ -1811,6 +1909,8 @@ static void shell_help(const char *topic) {
         terminal_write("      and physical-page allocation and release.\n\n");
         terminal_write("  watchtower fscheck | wt fscheck\n");
         terminal_write("      Run read-only disk, filesystem and root-directory checks.\n\n");
+        terminal_write("  watchtower fatwrite | wt fatwrite\n");
+        terminal_write("      Test multi-cluster creation, append and replacement on FAT16 volume B.\n\n");
         terminal_write("  watchtower report | wt rp\n");
         terminal_write("      Show current diagnostic status and the 10 most recent events.\n\n");
         terminal_write("Examples:\n");
