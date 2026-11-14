@@ -18,6 +18,8 @@
 
 #define DIRENT_FILE 1
 #define DIRENT_DIR  2
+#define DIR_STATE_NATIVE 1U
+#define DIR_STATE_ERROR 2U
 
 typedef long long fpos_t;
 

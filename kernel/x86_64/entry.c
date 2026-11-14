@@ -137,7 +137,7 @@ static void shell_ls(
         terminal_write("\n");
     }
 
-    if (dir->reserved) {
+    if (dir->reserved == DIR_STATE_ERROR) {
         terminal_write("list: directory scan failed because disk reading failed.\n");
         closedir(dir);
         return;
@@ -1297,7 +1297,7 @@ static bool shell_wt_filesystem_test(void) {
             return false;
         }
     }
-    if (dir->reserved) {
+    if (dir->reserved == DIR_STATE_ERROR) {
         closedir(dir);
         diagnostics_log("Watchtower filesystem test: directory traversal stopped after a disk read failure.");
         terminal_write("Root directory read: FAIL\n");

@@ -472,7 +472,7 @@ DIR *opendir(char *path) {
         dir->used = 1;
         dir->volume = volume;
         dir->fs = (u8)disktable[volumes[volume].disk].parts[volumes[volume].partition].fs;
-        dir->reserved = 1;
+        dir->reserved = DIR_STATE_NATIVE;
         dir->fsdata[0] = (u64)(uintptr_t)iterator;
         return dir;
     }
@@ -482,12 +482,20 @@ DIR *opendir(char *path) {
 dirent *readdir(DIR *dir) {
     if (!fs_dir_is_open(dir))
         return 0;
-    if (dir->reserved == 1) {
-        fat_node_dir *iterator = (fat_node_dir *)(uintptr_t)dir->fsdata[0];
-        if (!iterator)
+    if (dir->reserved == DIR_STATE_NATIVE || dir->reserved == DIR_STATE_ERROR) {
+        if (dir->reserved == DIR_STATE_ERROR)
             return 0;
+        fat_node_dir *iterator = (fat_node_dir *)(uintptr_t)dir->fsdata[0];
+        if (!iterator) {
+            dir->reserved = DIR_STATE_ERROR;
+            return 0;
+        }
         fat_node_entry entry;
         int result = fat_node_dir_next(iterator, &entry);
+        if (result == FAT_NODE_ERROR) {
+            dir->reserved = DIR_STATE_ERROR;
+            return 0;
+        }
         if (result != FAT_NODE_ENTRY)
             return 0;
         memset(dir->entry.name, 0, sizeof(dir->entry.name));
@@ -514,7 +522,7 @@ dirent *readdir(DIR *dir) {
 int closedir(DIR *dir) {
     if (!fs_dir_is_open(dir))
         return 1;
-    if (dir->reserved == 1) {
+    if (dir->reserved == DIR_STATE_NATIVE || dir->reserved == DIR_STATE_ERROR) {
         fat_node_dir *iterator = (fat_node_dir *)(uintptr_t)dir->fsdata[0];
         if (iterator)
             free(iterator);

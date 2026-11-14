@@ -11,6 +11,8 @@
 
 static u8 image[IMAGE_SECTORS][SECTOR_SIZE];
 static u32 links[MAX_CLUSTERS];
+static bool fail_read_enabled;
+static u64 fail_read_lba;
 static fat_native_volume configured_volume;
 static diskdata disk_table[4];
 static volume_t volume_table[LETTERS];
@@ -18,7 +20,8 @@ diskdata *disktable = disk_table;
 volume_t *volumes = volume_table;
 
 bool disk_read_sector(u64 lba, void *buffer, unsigned int disk) {
-    if (!buffer || disk != 0 || lba >= IMAGE_SECTORS)
+    if (!buffer || disk != 0 || lba >= IMAGE_SECTORS ||
+        (fail_read_enabled && lba == fail_read_lba))
         return false;
     memcpy(buffer, image[lba], SECTOR_SIZE);
     return true;
@@ -171,6 +174,8 @@ static void check(bool condition, const char *name) {
 static void prepare(void) {
     memset(image, 0, sizeof(image));
     memset(links, 0, sizeof(links));
+    fail_read_enabled = false;
+    fail_read_lba = 0;
     memset(disk_table, 0, sizeof(disk_table));
     memset(volume_table, 0, sizeof(volume_table));
     memset(&configured_volume, 0, sizeof(configured_volume));
@@ -239,9 +244,26 @@ int main(void) {
     check(entry && strcmp(entry->name, "DOC.TXT") == 0 && entry->type == DIRENT_FILE, "root readdir file");
     entry = directory ? readdir(directory) : 0;
     check(entry && strcmp(entry->name, "FOLDER") == 0 && entry->type == DIRENT_DIR, "root readdir directory");
-    check(directory && readdir(directory) == 0, "root readdir end");
+    check(directory && readdir(directory) == 0 &&
+          directory->reserved == DIR_STATE_NATIVE,
+          "normal directory end is not reported as a disk error");
     check(directory && closedir(directory) == 0, "closedir releases iterator");
     check(directory && closedir(directory) != 0, "double closedir rejected");
+
+    directory = opendir("|A/");
+    check(directory != 0, "root directory opens for disk-read error test");
+    fail_read_lba = configured_volume.partition_lba + configured_volume.root_start;
+    fail_read_enabled = true;
+    check(directory && readdir(directory) == 0 &&
+          directory->reserved == DIR_STATE_ERROR,
+          "directory disk read error is recorded");
+    check(directory && readdir(directory) == 0 &&
+          directory->reserved == DIR_STATE_ERROR,
+          "directory read error remains recorded");
+    fail_read_enabled = false;
+    check(directory && closedir(directory) == 0,
+          "directory iterator closes after a read error");
+
     directory = opendir("|A/FOLDER");
     entry = directory ? readdir(directory) : 0;
     check(entry && strcmp(entry->name, "INNER.TXT") == 0, "nested directory enumeration");
