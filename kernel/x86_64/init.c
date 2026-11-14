@@ -150,7 +150,7 @@ static void fat_runtime_smoke_test(void) {
     bool root_closed = closedir(root) == 0;
 
     if (root_closed) {
-        terminal_write("FAT ROOT DIRECTORY OK\n");
+        terminal_write("FAT ROOT DIRECTORY PASS\n");
         diagnostics_log("FAT test: root directory opened, enumerated and closed.");
     } else {
         terminal_write("FAT ROOT DIRECTORY FAILED\n");
@@ -158,7 +158,7 @@ static void fat_runtime_smoke_test(void) {
     }
 
     if (directory_seen && directory_passed) {
-        terminal_write("FAT NESTED DIRECTORY OK\n");
+        terminal_write("FAT NESTED DIRECTORY PASS\n");
         diagnostics_log("FAT test: nested directory opened and closed.");
     } else if (directory_seen) {
         terminal_write("FAT NESTED DIRECTORY FAILED\n");
@@ -169,8 +169,8 @@ static void fat_runtime_smoke_test(void) {
     }
 
     if (file_seen && file_passed) {
-        terminal_write("FAT FILE READ AND SEEK OK\n");
-        terminal_write("FAT EOF AND CLUSTER BOUNDARY OK\n");
+        terminal_write("FAT FILE READ AND SEEK PASS\n");
+        terminal_write("FAT EOF AND CLUSTER BOUNDARY PASS\n");
         diagnostics_log("FAT test: full file read, EOF, cluster-boundary read, last-byte seek and invalid seek passed.");
     } else if (file_seen) {
         terminal_write("FAT FILE READ AND SEEK FAILED\n");
@@ -196,7 +196,7 @@ static void fat_runtime_smoke_test(void) {
         }
 
         if (empty_passed) {
-            terminal_write("FAT EMPTY FILE OK\n");
+            terminal_write("FAT EMPTY FILE PASS\n");
             diagnostics_log("FAT test: empty file open, size, read, EOF and close passed.");
         } else {
             terminal_write("FAT EMPTY FILE FAILED\n");
@@ -208,7 +208,7 @@ static void fat_runtime_smoke_test(void) {
     }
 
     if (missing_file_rejected && missing_dir_rejected) {
-        terminal_write("FAT INVALID PATH REJECTION OK\n");
+        terminal_write("FAT INVALID PATH REJECTION PASS\n");
         diagnostics_log("FAT test: nonexistent file and directory were rejected.");
     } else {
         terminal_write("FAT INVALID PATH REJECTION FAILED\n");
@@ -263,17 +263,17 @@ void init(tosaithe_loader_data *loader_data) {
         phys_memory_init(loader_data);
         diagnostics_log("Boot checkpoint: physical memory initialized.");
         diagnostics_log("Boot: initializing physical memory.");
-        terminal_write("PHYSICAL MEMORY OK\n");
+        terminal_write("PHYSICAL MEMORY PASS\n");
 
         init_gdt();
         diagnostics_log("Boot checkpoint: GDT initialized.");
         diagnostics_log("Boot: GDT initialized.");
-        terminal_write("GDT OK\n");
+        terminal_write("GDT PASS\n");
 
         init_idt();
         diagnostics_log("Boot checkpoint: IDT initialized.");
         diagnostics_log("Boot: IDT initialized.");
-        terminal_write("IDT OK\n");
+        terminal_write("IDT PASS\n");
 
         if (!init_memory()) {
                 diagnostics_log("Boot failure: paging or heap initialization failed.");
@@ -282,7 +282,7 @@ void init(tosaithe_loader_data *loader_data) {
         }
         diagnostics_log("Boot checkpoint: paging and heap initialized.");
         diagnostics_log("Boot: paging initialization returned.");
-        terminal_write("PAGING OK\n");
+        terminal_write("PAGING PASS\n");
 
         keyboard_init();
         diagnostics_log("Boot checkpoint: keyboard initialized.");
@@ -291,13 +291,13 @@ void init(tosaithe_loader_data *loader_data) {
         init_timer();
         diagnostics_log("Boot checkpoint: timer initialized.");
         diagnostics_log("Boot: timer initialized.");
-        terminal_write("PIT OK\n");
+        terminal_write("PIT PASS\n");
 
         void *test = malloc(8192);
 
         if (test) {
                 memset(test, 0xA5, 8192);
-                terminal_write("KERNEL HEAP OK\n");
+                terminal_write("KERNEL HEAP PASS\n");
                 free(test);
         } else {
                 terminal_write("KERNEL HEAP FAILED\n");

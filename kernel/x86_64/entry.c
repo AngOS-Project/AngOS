@@ -2018,7 +2018,7 @@ void execute_command(const char *cmd) {
             )) {
 
             terminal_write(
-                "Sector 0: READ OK\n"
+                "Sector 0: READ PASS\n"
             );
 
             terminal_write(
@@ -2123,7 +2123,7 @@ void execute_command(const char *cmd) {
             u8 buffer[16];
 
             terminal_write(
-                "fopen: OK\n"
+                "fopen: PASS\n"
             );
 
             terminal_write(
