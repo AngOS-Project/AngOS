@@ -1314,7 +1314,7 @@ static bool shell_wt_memory_test(void) {
 
         if (!passed) {
             diagnostics_log("Watchtower memory test: allocation, mapping or data verification failed.");
-            terminal_write("Memory allocation and paging test: FAILED\n");
+            terminal_write("Memory allocation and paging test: FAIL\n");
             return false;
         }
 
@@ -1323,7 +1323,7 @@ static bool shell_wt_memory_test(void) {
             stable_free_pages = free_pages;
         } else if (free_pages != stable_free_pages) {
             diagnostics_log("Watchtower memory test: free-page count changed after a repeated allocation cycle.");
-            terminal_write("Memory allocation and paging test: FAILED\n");
+            terminal_write("Memory allocation and paging test: FAIL\n");
             terminal_write("Free-page count was not stable across repeated cycles.\n");
             return false;
         }
@@ -1336,19 +1336,19 @@ static bool shell_wt_memory_test(void) {
             if (page)
                 phys_page_free(page);
             diagnostics_log("Watchtower memory test: physical page allocation failed or returned an unaligned page.");
-            terminal_write("Physical page allocation test: FAILED\n");
+            terminal_write("Physical page allocation test: FAIL\n");
             return false;
         }
         if (phys_memory_free_pages() + 1 != before) {
             phys_page_free(page);
             diagnostics_log("Watchtower memory test: free-page counter did not decrease after allocation.");
-            terminal_write("Physical page accounting test: FAILED\n");
+            terminal_write("Physical page accounting test: FAIL\n");
             return false;
         }
         phys_page_free(page);
         if (phys_memory_free_pages() != before) {
             diagnostics_log("Watchtower memory test: physical page was not returned to the allocator.");
-            terminal_write("Physical page release test: FAILED\n");
+            terminal_write("Physical page release test: FAIL\n");
             return false;
         }
     }
@@ -1367,20 +1367,20 @@ static bool shell_wt_filesystem_test(void) {
 
     if (!disk_probe(0, &blocks)) {
         diagnostics_log("Watchtower filesystem test: primary disk probe failed.");
-        terminal_write("Disk probe: FAILED\n");
+        terminal_write("Disk probe: FAIL\n");
         return false;
     }
 
     if (!disk_read_sector(0, sector, 0)) {
         diagnostics_log("Watchtower filesystem test: sector-zero read failed.");
-        terminal_write("Sector read: FAILED\n");
+        terminal_write("Sector read: FAIL\n");
         return false;
     }
 
     int type = fat_detect(0);
     if (type != 12 && type != 16 && type != 32) {
         diagnostics_log("Watchtower filesystem test: no supported FAT filesystem was detected.");
-        terminal_write("Filesystem detection: FAILED\n");
+        terminal_write("Filesystem detection: FAIL\n");
         return false;
     }
     if (type != 16) {
@@ -1392,7 +1392,7 @@ static bool shell_wt_filesystem_test(void) {
     DIR *dir = opendir("|A/");
     if (!dir) {
         diagnostics_log("Watchtower filesystem test: root directory could not be opened.");
-        terminal_write("Root directory open: FAILED\n");
+        terminal_write("Root directory open: FAIL\n");
         return false;
     }
 
@@ -1403,14 +1403,14 @@ static bool shell_wt_filesystem_test(void) {
         if (entries >= 4096) {
             closedir(dir);
             diagnostics_log("Watchtower filesystem test: root directory scan exceeded the safety limit.");
-            terminal_write("Root directory scan: FAILED\n");
+            terminal_write("Root directory scan: FAIL\n");
             return false;
         }
     }
     if (dir->reserved) {
         closedir(dir);
         diagnostics_log("Watchtower filesystem test: directory traversal stopped after a disk read failure.");
-        terminal_write("Root directory read: FAILED\n");
+        terminal_write("Root directory read: FAIL\n");
         return false;
     }
     closedir(dir);
@@ -1647,7 +1647,7 @@ static void shell_wt(const char *argument) {
     }
     if (strcmp_local(sub, "selftest") == 0) {
         terminal_write("watchtower: running the event-history self-test.\n");
-        terminal_write(diagnostics_selftest() ? "watchtower self-test: PASS\n" : "watchtower self-test: FAILED\n");
+        terminal_write(diagnostics_selftest() ? "watchtower self-test: PASS\n" : "watchtower self-test: FAIL\n");
         return;
     }
     if (strcmp_local(sub, "memtest") == 0) {
@@ -1658,7 +1658,7 @@ static void shell_wt(const char *argument) {
     if (strcmp_local(sub, "fscheck") == 0) {
         terminal_write("watchtower: running read-only disk and filesystem checks.\n");
         if (!shell_wt_filesystem_test())
-            terminal_write("watchtower filesystem check: FAILED\n");
+            terminal_write("watchtower filesystem check: FAIL\n");
         else
             terminal_write("watchtower filesystem check: PASS\n");
         return;
@@ -1668,7 +1668,7 @@ static void shell_wt(const char *argument) {
         if (shell_wt_fatwrite_test())
             terminal_write("watchtower FAT write test: PASS\n");
         else
-            terminal_write("watchtower FAT write test: FAILED\n");
+            terminal_write("watchtower FAT write test: FAIL\n");
         return;
     }
     if (strcmp_local(sub, "report") == 0 || strcmp_local(sub, "rp") == 0) {
@@ -2047,7 +2047,7 @@ void execute_command(const char *cmd) {
         } else {
 
             terminal_write(
-                "Sector 0: READ FAILED\n"
+                "Sector 0: READ FAIL\n"
             );
         }
 
@@ -2115,7 +2115,7 @@ void execute_command(const char *cmd) {
         if (!fp) {
 
             terminal_write(
-                "fopen: FAILED\n"
+                "fopen: FAIL\n"
             );
 
         } else {

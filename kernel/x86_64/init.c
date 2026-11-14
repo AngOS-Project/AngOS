@@ -57,7 +57,7 @@ static void fat_runtime_smoke_test(void) {
 
     DIR *root = opendir(root_path);
     if (!root) {
-        terminal_write("FAT TEST ROOT FAILED\n");
+        terminal_write("FAT TEST ROOT FAIL\n");
         diagnostics_log("FAT test: root directory open failed.");
         return;
     }
@@ -153,7 +153,7 @@ static void fat_runtime_smoke_test(void) {
         terminal_write("FAT ROOT DIRECTORY PASS\n");
         diagnostics_log("FAT test: root directory opened, enumerated and closed.");
     } else {
-        terminal_write("FAT ROOT DIRECTORY FAILED\n");
+        terminal_write("FAT ROOT DIRECTORY FAIL\n");
         diagnostics_log("FAT test: root directory close failed.");
     }
 
@@ -161,7 +161,7 @@ static void fat_runtime_smoke_test(void) {
         terminal_write("FAT NESTED DIRECTORY PASS\n");
         diagnostics_log("FAT test: nested directory opened and closed.");
     } else if (directory_seen) {
-        terminal_write("FAT NESTED DIRECTORY FAILED\n");
+        terminal_write("FAT NESTED DIRECTORY FAIL\n");
         diagnostics_log("FAT test: nested directory open or close failed.");
     } else {
         terminal_write("FAT NESTED DIRECTORY SKIPPED\n");
@@ -173,8 +173,8 @@ static void fat_runtime_smoke_test(void) {
         terminal_write("FAT EOF AND CLUSTER BOUNDARY PASS\n");
         diagnostics_log("FAT test: full file read, EOF, cluster-boundary read, last-byte seek and invalid seek passed.");
     } else if (file_seen) {
-        terminal_write("FAT FILE READ AND SEEK FAILED\n");
-        terminal_write("FAT EOF AND CLUSTER BOUNDARY FAILED\n");
+        terminal_write("FAT FILE READ AND SEEK FAIL\n");
+        terminal_write("FAT EOF AND CLUSTER BOUNDARY FAIL\n");
         diagnostics_log("FAT test: full file read, EOF, cluster boundary or seek failed.");
     } else {
         terminal_write("FAT FILE READ SKIPPED\n");
@@ -199,7 +199,7 @@ static void fat_runtime_smoke_test(void) {
             terminal_write("FAT EMPTY FILE PASS\n");
             diagnostics_log("FAT test: empty file open, size, read, EOF and close passed.");
         } else {
-            terminal_write("FAT EMPTY FILE FAILED\n");
+            terminal_write("FAT EMPTY FILE FAIL\n");
             diagnostics_log("FAT test: empty file handling failed.");
         }
     } else {
@@ -211,7 +211,7 @@ static void fat_runtime_smoke_test(void) {
         terminal_write("FAT INVALID PATH REJECTION PASS\n");
         diagnostics_log("FAT test: nonexistent file and directory were rejected.");
     } else {
-        terminal_write("FAT INVALID PATH REJECTION FAILED\n");
+        terminal_write("FAT INVALID PATH REJECTION FAIL\n");
         diagnostics_log("FAT test: a nonexistent path was accepted or cleanup failed.");
     }
 }
@@ -277,7 +277,7 @@ void init(tosaithe_loader_data *loader_data) {
 
         if (!init_memory()) {
                 diagnostics_log("Boot failure: paging or heap initialization failed.");
-                terminal_write("PAGING FAILED\n");
+                terminal_write("PAGING FAIL\n");
                 diagnostics_panic("Paging initialization failed (software)", 0, 0, false, 0, false, 0);
         }
         diagnostics_log("Boot checkpoint: paging and heap initialized.");
@@ -300,7 +300,7 @@ void init(tosaithe_loader_data *loader_data) {
                 terminal_write("KERNEL HEAP PASS\n");
                 free(test);
         } else {
-                terminal_write("KERNEL HEAP FAILED\n");
+                terminal_write("KERNEL HEAP FAIL\n");
         }
 
         terminal_write("DISK INITIALIZING\n");
@@ -323,7 +323,7 @@ void init(tosaithe_loader_data *loader_data) {
                 }
 
         } else {
-                terminal_write("DISK FILESYSTEM FAILED\n");
+                terminal_write("DISK FILESYSTEM FAIL\n");
         }
 
         diagnostics_log("Boot: kernel initialization complete.");
