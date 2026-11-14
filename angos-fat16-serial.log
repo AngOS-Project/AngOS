@@ -30,3 +30,4 @@ Loading AngOS kernel...
 [WATCHTOWER] Boot: disk initialization returned.
 [WATCHTOWER] Boot: kernel initialization complete.
 [WATCHTOWER] Boot checkpoint: kernel initialization complete.
+[WATCHTOWER] remove: FAT16 delete routine entered.
