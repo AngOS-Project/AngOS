@@ -667,7 +667,8 @@ static void shell_ed(const char *argument) {
 
     char fat_name[11];
 
-    if (!shell_make_fat83(filename, fat_name)) {
+    if (!shell_make_fat83(filename, fat_name) ||
+        strchr_local(filename, '\\') != 0) {
         terminal_write("edit: invalid 8.3 filename\n");
         return;
     }
@@ -1032,32 +1033,56 @@ static void shell_ed(const char *argument) {
         new_data[output_offset++] = '\n';
 
     {
-        int result = fat16_replace_file(
-            fat_name,
-            new_data,
-            output_offset
-        );
+        FILE *output = fopen(path, FOPEN_WRITE | FOPEN_TRUNCATE);
 
-        if (result == FAT16_WRITE_OK) {
-            saved = true;
-        } else if (result == FAT16_WRITE_NOT_FOUND) {
-            message = "edit: file not found\n";
-        } else if (result == FAT16_WRITE_NO_SPACE) {
-            message = "edit: not enough disk space\n";
-        } else if (result == FAT16_WRITE_NO_MEMORY) {
-            message = "edit: not enough memory for disk operation\n";
-        } else if (result == FAT16_WRITE_BAD_FS) {
-            message = "edit: FAT16 filesystem unavailable\n";
-        } else if (result == FAT16_WRITE_NOT_FILE) {
-            message = "edit: target is not a file\n";
-        } else if (result == FAT16_WRITE_NOT_EMPTY) {
-            message = "edit: file changed while editing; no changes committed\n";
-        } else if (result == FAT16_WRITE_TOO_LARGE) {
-            message = "edit: edited file is too large for this operation\n";
-        } else if (result == FAT16_WRITE_IO_ERROR) {
-            message = "edit: disk read, write, or verification failed\n";
+        if (!output) {
+            message = "edit: unable to open file for native writing\n";
         } else {
-            message = "edit: saving the edited file failed\n";
+            size_t written = output_offset
+                ? fwrite(new_data, output_offset, output)
+                : 0;
+
+            if (written != output_offset) {
+                fabort(output);
+                message = "edit: write failed; original file was preserved\n";
+            } else if (fclose(output) != 0) {
+                message = "edit: disk write or commit failed\n";
+            } else {
+                FILE *verify = fopen(path, FOPEN_READ);
+
+                if (!verify) {
+                    message = "edit: saved file could not be reopened\n";
+                } else {
+                    bool matches = fsize(verify) == output_offset;
+                    u32 checked = 0;
+                    u8 verify_buffer[256];
+
+                    while (matches && checked < output_offset) {
+                        size_t chunk = (size_t)(output_offset - checked);
+
+                        if (chunk > sizeof(verify_buffer))
+                            chunk = sizeof(verify_buffer);
+
+                        size_t count = fread(verify_buffer, chunk, verify);
+
+                        if (count != chunk ||
+                            memcmp(verify_buffer, new_data + checked, chunk) != 0) {
+                            matches = false;
+                            break;
+                        }
+
+                        checked += (u32)count;
+                    }
+
+                    int verify_close = fclose(verify);
+
+                    if (matches && checked == output_offset && verify_close == 0) {
+                        saved = true;
+                    } else {
+                        message = "edit: saved file verification failed\n";
+                    }
+                }
+            }
         }
     }
 
@@ -1075,7 +1100,7 @@ cleanup:
         terminal_write(message);
 
     if (saved) {
-        terminal_write("edit: saved ");
+        terminal_write("edit: PASS - saved ");
         terminal_write(filename);
         terminal_write("\n");
     }
