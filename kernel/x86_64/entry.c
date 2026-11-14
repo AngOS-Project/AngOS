@@ -422,6 +422,11 @@ static void shell_rm(const char *argument) {
 }
 
 static void shell_cp(const char *argument) {
+    if (!argument) {
+        terminal_write("Usage: copy <source-file> <destination-name>\n");
+        return;
+    }
+
     char source_name[125];
     char destination_name[13];
     char source_path[128];
@@ -481,7 +486,8 @@ static void shell_cp(const char *argument) {
     }
 
     if (!shell_make_fat83(destination_name, fat_name) ||
-        strchr_local(destination_name, '/') != 0) {
+        strchr_local(destination_name, '/') != 0 ||
+        strchr_local(destination_name, '\\') != 0) {
         terminal_write("copy: destination must be an 8.3 filename in the root directory\n");
         return;
     }
@@ -500,23 +506,23 @@ static void shell_cp(const char *argument) {
     if (source_dir) {
         closedir(source_dir);
         terminal_write("copy: recursive directory copying is not supported yet\n");
-        terminal_write("copy: directory creation and nested-file writing must be implemented first\n");
         return;
     }
 
-    FILE *source_fp = fopen(source_path, 0);
+    FILE *source_fp = fopen(source_path, FOPEN_READ);
     if (!source_fp) {
         terminal_write("copy: source file not found\n");
         return;
     }
 
-    if (source_fp->size > 0xFFFFFFFFULL) {
+    unsigned long long source_size = fsize(source_fp);
+    if (source_size > 0xFFFFFFFFULL) {
         fclose(source_fp);
         terminal_write("copy: source file is too large\n");
         return;
     }
 
-    u32 length = (u32)source_fp->size;
+    u32 length = (u32)source_size;
     u8 *buffer = malloc(length ? (size_t)length : 1);
 
     if (!buffer) {
@@ -527,23 +533,17 @@ static void shell_cp(const char *argument) {
 
     u32 loaded = 0;
     while (loaded < length) {
-        size_t count = fread(
-            buffer + loaded,
-            length - loaded,
-            source_fp
-        );
-
+        size_t count = fread(buffer + loaded, length - loaded, source_fp);
         if (count == 0)
             break;
-
         loaded += (u32)count;
     }
 
-    fclose(source_fp);
+    int source_close = fclose(source_fp);
 
-    if (loaded != length) {
+    if (loaded != length || source_close != 0) {
         free(buffer);
-        terminal_write("copy: could not read the entire source file\n");
+        terminal_write("copy: could not read and close the entire source file\n");
         return;
     }
 
@@ -555,43 +555,73 @@ static void shell_cp(const char *argument) {
         return;
     }
 
-    FILE *destination_fp = fopen(destination_path, 0);
+    FILE *destination_fp = fopen(
+        destination_path,
+        FOPEN_WRITE | FOPEN_CREATE | FOPEN_TRUNCATE
+    );
 
-    if (destination_fp) {
-        fclose(destination_fp);
-    } else {
-        shell_nw(destination_name);
-        destination_fp = fopen(destination_path, 0);
+    if (!destination_fp) {
+        free(buffer);
+        terminal_write("copy: could not open destination for writing\n");
+        return;
+    }
 
-        if (!destination_fp) {
-            free(buffer);
-            terminal_write("copy: could not create destination file\n");
-            return;
+    size_t written = length ? fwrite(buffer, length, destination_fp) : 0;
+
+    if (written != length) {
+        fabort(destination_fp);
+        free(buffer);
+        terminal_write("copy: write failed; the buffered changes were discarded\n");
+        return;
+    }
+
+    if (fclose(destination_fp) != 0) {
+        free(buffer);
+        terminal_write("copy: destination commit failed\n");
+        return;
+    }
+
+    FILE *verify = fopen(destination_path, FOPEN_READ);
+    if (!verify) {
+        free(buffer);
+        terminal_write("copy: destination could not be reopened for verification\n");
+        return;
+    }
+
+    bool verified = fsize(verify) == length;
+    u32 verified_bytes = 0;
+    u8 verify_buffer[256];
+
+    while (verified && verified_bytes < length) {
+        size_t chunk = (size_t)(length - verified_bytes);
+        if (chunk > sizeof(verify_buffer))
+            chunk = sizeof(verify_buffer);
+
+        size_t count = fread(verify_buffer, chunk, verify);
+
+        if (count != chunk ||
+            memcmp(verify_buffer, buffer + verified_bytes, chunk) != 0) {
+            verified = false;
+            break;
         }
 
-        fclose(destination_fp);
+        verified_bytes += (u32)count;
     }
 
-    int result = fat16_replace_file(fat_name, buffer, length);
+    int verify_close = fclose(verify);
     free(buffer);
 
-    if (result == FAT16_WRITE_OK) {
-        terminal_write("copy: copied ");
-        terminal_write(source_name);
-        terminal_write(" to ");
-        terminal_write(destination_name);
-        terminal_write("\n");
-    } else if (result == FAT16_WRITE_NO_SPACE) {
-        terminal_write("copy: not enough disk space\n");
-    } else if (result == FAT16_WRITE_NO_MEMORY) {
-        terminal_write("copy: not enough memory for disk operation\n");
-    } else if (result == FAT16_WRITE_TOO_LARGE) {
-        terminal_write("copy: file is too large for the destination operation\n");
-    } else {
-        terminal_write("copy: copy failed; the destination may be unchanged\n");
+    if (!verified || verified_bytes != length || verify_close != 0) {
+        terminal_write("copy: FAIL - destination verification failed\n");
+        return;
     }
-}
 
+    terminal_write("copy: PASS - copied ");
+    terminal_write(source_name);
+    terminal_write(" to ");
+    terminal_write(destination_name);
+    terminal_write("\n");
+}
 #define ED_MAX_FILE_SIZE 16384U
 #define ED_MAX_LINES 8192U
 
