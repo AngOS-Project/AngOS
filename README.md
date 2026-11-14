@@ -20,3 +20,7 @@ It may contain bugs, incomplete features, security issues, and breaking changes.
 Please note that the AngOS repository currently contains many unused, redundant files, making the core functional codebase quite small by comparison. There are also large amounts accumulated backup files (.bak) that are often larger than the actual source code. Future maintenance will focus on streamlining these assets to improve readability and repository health, though most files will be retained as documentation, future use or backup.
 
 *AngOS is managed by the AngOS Project, with the official repository hosted on GitHub at (https://github.com/AngOS-Project).*
+
+## Recent Major Changes
+
+Recently a change was made to change the several different terms used in AngOS, OK, FAILED, ERROR and PASS into just PASS or FAIL. The reason of this is to ensure that the ecosystem has continuity and is consistant.
