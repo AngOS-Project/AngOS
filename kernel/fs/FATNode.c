@@ -50,6 +50,7 @@ static void fat_node_lfn_reset(fat_node_dir *directory) {
     directory->lfn_active = 0;
     directory->lfn_expected = 0;
     directory->lfn_checksum = 0;
+    directory->lfn_slot_count = 0;
 }
 
 static void fat_node_lfn_copy(fat_node_dir *directory, const u8 *entry, u8 sequence) {
@@ -67,6 +68,7 @@ static void fat_node_lfn_feed(fat_node_dir *directory, const u8 *entry) {
         return;
     }
     if (last) {
+        directory->lfn_slot_count = 0;
         for (u32 i = 0; i < 260; ++i)
             directory->lfn_units[i] = 0xFFFF;
         directory->lfn_active = 1;
@@ -129,7 +131,7 @@ static void fat_node_short_decode(const u8 *entry, char output[256]) {
     output[out] = '\0';
 }
 
-static void fat_node_entry_build(fat_node_dir *directory, const u8 *raw, fat_node_entry *entry) {
+static bool fat_node_entry_build(fat_node_dir *directory, const u8 *raw, fat_node_entry *entry) {
     u32 low = fat_node_u16(&raw[26]);
     u32 high = fat_node_u16(&raw[20]);
     entry->node.first_cluster = (directory->filesystem->volume.fat_bits == FAT_NATIVE_FAT32)
@@ -141,9 +143,11 @@ static void fat_node_entry_build(fat_node_dir *directory, const u8 *raw, fat_nod
     entry->node.fixed_root = 0;
     entry->node.reserved = 0;
     entry->type = (raw[11] & 0x10U) ? FAT_NODE_DIRECTORY : FAT_NODE_FILE;
-    if (!fat_node_lfn_decode(directory, raw, entry->name))
+    bool has_lfn = fat_node_lfn_decode(directory, raw, entry->name);
+    if (!has_lfn)
         fat_node_short_decode(raw, entry->name);
     fat_node_lfn_reset(directory);
+    return has_lfn;
 }
 
 bool fat_node_mount(fat_node_fs *filesystem, unsigned int disk, unsigned int partition) {
@@ -209,6 +213,7 @@ static int fat_node_dir_load_sector(fat_node_dir *directory) {
     }
     if (!disk_read_sector(lba, directory->sector, volume->disk))
         return FAT_NODE_ERROR;
+    directory->sector_lba = lba;
     directory->buffer_valid = 1;
     return FAT_NODE_ENTRY;
 }
@@ -226,7 +231,9 @@ int fat_node_dir_next(fat_node_dir *directory, fat_node_entry *entry) {
             if (loaded != FAT_NODE_ENTRY)
                 return FAT_NODE_ERROR;
         }
-        u8 *raw = &directory->sector[directory->entry_offset];
+        u64 raw_lba = directory->sector_lba;
+        u16 raw_offset = directory->entry_offset;
+        u8 *raw = &directory->sector[raw_offset];
         directory->entry_offset = (u16)(directory->entry_offset + 32U);
         ++directory->entry_index;
         if (directory->entry_offset >= SECTOR_SIZE) {
@@ -245,14 +252,41 @@ int fat_node_dir_next(fat_node_dir *directory, fat_node_entry *entry) {
             continue;
         }
         if (raw[11] == 0x0F) {
+            u8 sequence = raw[0] & 0x1FU;
             fat_node_lfn_feed(directory, raw);
+            if (directory->lfn_active &&
+                sequence != 0 &&
+                sequence <= FAT_NODE_LFN_MAX &&
+                directory->lfn_expected == (u8)(sequence - 1U)) {
+                if (directory->lfn_slot_count >= FAT_NODE_LFN_MAX) {
+                    fat_node_lfn_reset(directory);
+                } else {
+                    fat_node_dir_slot *slot =
+                        &directory->lfn_slots[directory->lfn_slot_count++];
+                    slot->lba = raw_lba;
+                    slot->offset = raw_offset;
+                    slot->sequence = raw[0];
+                    slot->checksum = raw[13];
+                }
+            }
             continue;
         }
         if (raw[11] & 0x08U) {
             fat_node_lfn_reset(directory);
             continue;
         }
-        fat_node_entry_build(directory, raw, entry);
+        u8 saved_lfn_count = directory->lfn_slot_count;
+        fat_node_dir_slot saved_lfn_slots[FAT_NODE_LFN_MAX];
+        memcpy(saved_lfn_slots, directory->lfn_slots, sizeof(saved_lfn_slots));
+
+        bool has_lfn = fat_node_entry_build(directory, raw, entry);
+        entry->short_lba = raw_lba;
+        entry->short_offset = raw_offset;
+        entry->lfn_count = has_lfn ? saved_lfn_count : 0;
+        if (has_lfn)
+            memcpy(entry->lfn_slots, saved_lfn_slots, sizeof(entry->lfn_slots));
+        memcpy(entry->raw, raw, 32);
+
         if (entry->name[0] == '\0')
             continue;
         if (entry->type == FAT_NODE_DIRECTORY && entry->node.first_cluster < 2)

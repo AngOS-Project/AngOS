@@ -212,14 +212,39 @@ static void run_variant(u8 bits) {
     check(fat_node_dir_open(&filesystem, &root, &directory), "root directory open");
     u32 names = 0;
     bool saw_lfn = false;
+    bool lfn_locations_ok = false;
+    bool short_location_ok = false;
+    u64 expected_root_lba = bits == FAT_NATIVE_FAT32 ? 8 : 6;
     int state;
     while ((state = fat_node_dir_next(&directory, &entry)) == FAT_NODE_ENTRY) {
         ++names;
-        if (strcmp(entry.name, "Long Document.txt") == 0)
+        if (strcmp(entry.name, "Long Document.txt") == 0) {
             saw_lfn = true;
+            lfn_locations_ok =
+                entry.lfn_count == 2 &&
+                entry.lfn_slots[0].lba == expected_root_lba &&
+                entry.lfn_slots[0].offset == 0 &&
+                entry.lfn_slots[0].sequence == 0x42 &&
+                entry.lfn_slots[1].lba == expected_root_lba &&
+                entry.lfn_slots[1].offset == 32 &&
+                entry.lfn_slots[1].sequence == 1 &&
+                entry.lfn_slots[0].checksum == entry.lfn_slots[1].checksum &&
+                entry.short_lba == expected_root_lba &&
+                entry.short_offset == 64 &&
+                memcmp(entry.raw, "LONGDO~1TXT", 11) == 0;
+        }
+        if (strcmp(entry.name, "FRAG.BIN") == 0) {
+            short_location_ok =
+                entry.lfn_count == 0 &&
+                entry.short_lba == expected_root_lba &&
+                entry.short_offset == 96 &&
+                memcmp(entry.raw, "FRAG    BIN", 11) == 0;
+        }
     }
     check(state == FAT_NODE_END && names == 4, "root directory enumeration");
     check(saw_lfn, "long filename directory entry");
+    check(lfn_locations_ok, "long filename and short entry disk locations captured");
+    check(short_location_ok, "short-name entry disk location captured");
     if (bits == FAT_NATIVE_FAT12) {
         links[9] = 5;
         check(fat_node_lookup(&filesystem, "FRAG.BIN", &target), "cycle fixture file lookup");

@@ -10,6 +10,7 @@
 #define FAT_NODE_ERROR -1
 #define FAT_NODE_END 0
 #define FAT_NODE_ENTRY 1
+#define FAT_NODE_LFN_MAX 20
 
 typedef struct {
     u32 first_cluster;
@@ -26,6 +27,13 @@ typedef struct {
 } fat_node_fs;
 
 typedef struct {
+    u64 lba;
+    u16 offset;
+    u8 sequence;
+    u8 checksum;
+} fat_node_dir_slot;
+
+typedef struct {
     const fat_node_fs *filesystem;
     fat_node directory;
     u32 current_cluster;
@@ -33,12 +41,15 @@ typedef struct {
     u32 entry_index;
     u8 sector_index;
     u16 entry_offset;
+    u64 sector_lba;
     u8 buffer_valid;
     u8 ended;
     u8 lfn_active;
     u8 lfn_expected;
     u8 lfn_checksum;
+    u8 lfn_slot_count;
     u16 lfn_units[260];
+    fat_node_dir_slot lfn_slots[FAT_NODE_LFN_MAX];
     u8 sector[512];
 } fat_node_dir;
 
@@ -46,6 +57,11 @@ typedef struct {
     fat_node node;
     char name[256];
     u8 type;
+    u64 short_lba;
+    u16 short_offset;
+    u8 lfn_count;
+    u8 raw[32];
+    fat_node_dir_slot lfn_slots[FAT_NODE_LFN_MAX];
 } fat_node_entry;
 
 bool fat_node_mount(fat_node_fs *filesystem, unsigned int disk, unsigned int partition);
