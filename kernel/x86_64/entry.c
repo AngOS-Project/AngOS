@@ -267,242 +267,77 @@ static bool shell_make_fat83(
     return base > 0;
 }
 
-static void shell_nw(
-    const char *argument
-) {
+static void shell_nw(const char *argument) {
     if (!argument || !argument[0]) {
-        terminal_write(
-            "new: missing filename\n"
-        );
+        terminal_write("new: FAIL - missing filename\n");
         return;
     }
 
-    if (!disktable ||
-        !volumes ||
-        disktable[0].parts[0].fs != fat16) {
-
-        terminal_write(
-            "new: FAT16 filesystem unavailable\n"
-        );
-        return;
+    u32 length = 0;
+    while (argument[length]) {
+        if (length >= 12 || argument[length] == '/' || argument[length] == '\\') {
+            terminal_write("new: FAIL - filename must be a root-directory 8.3 name\n");
+            return;
+        }
+        ++length;
     }
 
     char fat_name[11];
-
-    if (!shell_make_fat83(
-            argument,
-            fat_name
-        )) {
-
-        terminal_write(
-            "new: invalid 8.3 filename\n"
-        );
+    if (!shell_make_fat83(argument, fat_name)) {
+        terminal_write("new: FAIL - invalid 8.3 filename\n");
         return;
     }
 
-    u8 mbr[512];
-    u8 boot[512];
-    u8 sector[512];
+    char path[16];
+    path[0] = '|';
+    path[1] = 'A';
+    path[2] = '/';
+    memcpy(path + 3, argument, length);
+    path[length + 3] = '\0';
 
-    if (!disk_read_sector(
-            0,
-            mbr,
-            0
-        )) {
-
-        terminal_write(
-            "new: unable to read MBR\n"
-        );
+    FILE *existing = fopen(path, FOPEN_READ);
+    if (existing) {
+        fclose(existing);
+        terminal_write("new: FAIL - file already exists\n");
         return;
     }
 
-    u32 partition_lba =
-        (u32)mbr[446 + 8] |
-        ((u32)mbr[446 + 9] << 8) |
-        ((u32)mbr[446 + 10] << 16) |
-        ((u32)mbr[446 + 11] << 24);
-
-    if (!disk_read_sector(
-            partition_lba,
-            boot,
-            0
-        )) {
-
-        terminal_write(
-            "new: unable to read FAT boot sector\n"
-        );
+    DIR *directory = opendir(path);
+    if (directory) {
+        closedir(directory);
+        terminal_write("new: FAIL - a directory already has that name\n");
         return;
     }
 
-    u16 bytes_per_sector =
-        (u16)boot[11] |
-        ((u16)boot[12] << 8);
-
-    u8 sectors_per_cluster =
-        boot[13];
-
-    u16 reserved_sectors =
-        (u16)boot[14] |
-        ((u16)boot[15] << 8);
-
-    u8 fat_count =
-        boot[16];
-
-    u16 root_entries =
-        (u16)boot[17] |
-        ((u16)boot[18] << 8);
-
-    u16 sectors_per_fat =
-        (u16)boot[22] |
-        ((u16)boot[23] << 8);
-
-    if (bytes_per_sector != 512 ||
-        sectors_per_cluster == 0 ||
-        reserved_sectors == 0 ||
-        fat_count == 0 ||
-        root_entries == 0 ||
-        sectors_per_fat == 0) {
-
-        terminal_write(
-            "new: invalid FAT16 filesystem\n"
-        );
+    FILE *created = fopen(path, FOPEN_WRITE | FOPEN_CREATE);
+    if (!created) {
+        terminal_write("new: FAIL - native filesystem could not create the file\n");
         return;
     }
 
-    u32 root_sectors =
-        ((u32)root_entries * 32 + 511) / 512;
-
-    u32 fat_lba =
-        partition_lba +
-        reserved_sectors;
-
-    u32 root_lba =
-        fat_lba +
-        ((u32)fat_count * sectors_per_fat);
-
-    for (u32 s = 0;
-         s < root_sectors;
-         ++s) {
-
-        if (!disk_read_sector(
-                root_lba + s,
-                sector,
-                0
-            )) {
-
-            terminal_write(
-                "new: unable to read root directory\n"
-            );
-            return;
-        }
-
-        for (u32 off = 0;
-             off < 512;
-             off += 32) {
-
-            u8 first =
-                sector[off];
-
-            if (first == 0x00 ||
-                first == 0xE5) {
-
-                memset(
-                    &sector[off],
-                    0,
-                    32
-                );
-
-                memcpy(
-                    &sector[off],
-                    fat_name,
-                    11
-                );
-
-                sector[off + 11] =
-                    ARCHIVE;
-                if (!writesectorpio(root_lba + s, 1, sector, 0)) {
-                    terminal_write("new: disk write failed or timed out\n");
-                    return;
-                }
-
-                u8 verify[512];
-
-                if (!disk_read_sector(
-                        root_lba + s,
-                        verify,
-                        0
-                    )) {
-
-                    terminal_write(
-                        "new: write verification failed\n"
-                    );
-                    return;
-                }
-
-                bool verified = true;
-
-                for (u32 i = 0; i < 11; ++i) {
-                    if (verify[off + i] !=
-                        (u8)fat_name[i]) {
-
-                        verified = false;
-                        break;
-                    }
-                }
-
-                if (!verified) {
-                    terminal_write(
-                        "new: write verification failed\n"
-                    );
-                    return;
-                }
-
-                terminal_write(
-                    "Created: "
-                );
-
-                terminal_write(
-                    argument
-                );
-
-                terminal_write(
-                    "\n"
-                );
-
-                return;
-            }
-
-            if (sector[off] == 0xE5)
-                continue;
-
-            bool same = true;
-
-            for (u32 i = 0;
-                 i < 11;
-                 ++i) {
-
-                if (sector[off + i] !=
-                    (u8)fat_name[i]) {
-
-                    same = false;
-                    break;
-                }
-            }
-
-            if (same) {
-                terminal_write(
-                    "new: file already exists\n"
-                );
-                return;
-            }
-        }
+    if (fclose(created) != 0) {
+        terminal_write("new: FAIL - file could not be committed to disk\n");
+        return;
     }
 
-    terminal_write(
-        "new: root directory is full\n"
-    );
+    FILE *verify = fopen(path, FOPEN_READ);
+    if (!verify) {
+        terminal_write("new: FAIL - created file could not be reopened\n");
+        return;
+    }
+
+    bool valid = fsize(verify) == 0;
+    int close_result = fclose(verify);
+
+    if (!valid || close_result != 0) {
+        terminal_write("new: FAIL - empty-file verification failed\n");
+        return;
+    }
+
+    terminal_write("new: PASS - created ");
+    terminal_write(argument);
+    terminal_write("\n");
 }
-
 static void shell_ec(const char *argument) {
     if (!argument || !argument[0]) {
         terminal_write("\n");
@@ -1833,8 +1668,8 @@ static void shell_help(const char *topic) {
         terminal_write("Purpose : Create a new empty file.\n");
         terminal_write("Usage: new <filename> | nw <filename>\n");
         terminal_write("Details : The filename is required. The current implementation supports\n");
-        terminal_write("          FAT 8.3 filenames in the FAT16 root directory and does not overwrite\n");
-        terminal_write("          an existing file with the same name.\n");
+        terminal_write("          FAT 8.3 filenames in the native FAT12, FAT16 or FAT32 root directory.\n");
+        terminal_write("          Existing files are left unchanged.\n");
         terminal_write("Example : new notes.txt\n");
         terminal_write("          nw notes.txt\n");
     } else if (strcmp_local(topic, "ec") == 0) {
