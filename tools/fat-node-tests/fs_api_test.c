@@ -271,6 +271,16 @@ int main(void) {
     check(file && fsize(file) == 11 && fread(data, 11, file) == 11 && memcmp(data, "replacement", 11) == 0, "replaced file can be reopened and read");
     check(links[5] == 0, "replacement releases the previous cluster chain");
     check(file && fclose(file) == 0, "replaced file read handle closes");
+    file = fopen("|A/DOC.TXT", FOPEN_WRITE | FOPEN_TRUNCATE);
+    check(file != 0, "fopen opens a file for an abortable write");
+    check(file && fwrite("discarded", 9, file) == 9, "abort test buffers replacement data");
+    check(file && fabort(file) == 0, "fabort discards an uncommitted write");
+    file = fopen("|A/DOC.TXT", FOPEN_READ);
+    memset(data, 0, sizeof(data));
+    check(file && fsize(file) == 11 && fread(data, 11, file) == 11 &&
+          memcmp(data, "replacement", 11) == 0,
+          "aborted write preserves original file contents");
+    check(file && fclose(file) == 0, "aborted file read handle closes");
     printf("%s: %d failed checks\n", failures ? "FAILED" : "ALL FS API TESTS PASSED", failures);
     return failures ? 1 : 0;
 }

@@ -30,4 +30,3 @@ Loading AngOS kernel...
 [WATCHTOWER] Boot: disk initialization returned.
 [WATCHTOWER] Boot: kernel initialization complete.
 [WATCHTOWER] Boot checkpoint: kernel initialization complete.
-[WATCHTOWER] Native FAT write test passed: multi-cluster creation, append, replacement and read-back on volume B.

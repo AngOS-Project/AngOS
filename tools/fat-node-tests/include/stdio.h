@@ -45,6 +45,7 @@ typedef struct DIR {
 } DIR;
 FILE *fopen(char *path, u8 flags);
 int fclose(FILE *fp);
+int fabort(FILE *fp);
 size_t fread(void *ptr, size_t bytes, FILE *fp);
 size_t fwrite(const void *ptr, size_t bytes, FILE *fp);
 int fseek(FILE *fp, long long offset, fpos_t position);

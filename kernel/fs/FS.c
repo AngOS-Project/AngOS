@@ -314,6 +314,16 @@ int fclose(FILE *fp) {
     return result;
 }
 
+int fabort(FILE *fp) {
+    if (!fs_file_is_open(fp))
+        return 1;
+    if (fp->write_buffer)
+        free(fp->write_buffer);
+    fs_free_path(fp->path, fp->path_count);
+    memset(fp, 0, sizeof(*fp));
+    return 0;
+}
+
 size_t fread(void *ptr, size_t bytes, FILE *fp) {
     if (!ptr || !fs_file_is_open(fp) || !(fp->mode & FOPEN_READ) || bytes == 0 || fp->pointer >= fp->size)
         return 0;
