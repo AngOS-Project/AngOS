@@ -153,5 +153,5 @@ test-fs-api:
 
 test-fat-write:
 	@mkdir -p $(BUILD)
-	$(CC) -std=c11 -Wall -Wextra -Werror -fno-builtin -Itools/fat-write-tests/include -Ikernel/fs kernel/fs/FATWrite.c tools/fat-write-tests/fat_write_test.c -o $(BUILD)/fat_write_test.exe
+	$(CC) -std=c11 -Wall -Wextra -Werror -fno-builtin -Itools/fat-write-tests/include -Ikernel/fs kernel/fs/FATNode.c kernel/fs/FATWrite.c tools/fat-write-tests/fat_write_test.c -o $(BUILD)/fat_write_test.exe
 	$(BUILD)/fat_write_test.exe

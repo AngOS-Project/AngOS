@@ -267,6 +267,7 @@ int fat_node_dir_next(fat_node_dir *directory, fat_node_entry *entry) {
                     slot->offset = raw_offset;
                     slot->sequence = raw[0];
                     slot->checksum = raw[13];
+                    memcpy(slot->raw, raw, 32);
                 }
             }
             continue;

@@ -375,6 +375,288 @@ static int fat_write_commit_entry(const fat_node_fs *filesystem, fat_write_slot 
     return memcmp(&verify[slot->offset], entry, FAT_WRITE_ENTRY_SIZE) == 0 ? 1 : -1;
 }
 
+
+#define FAT_WRITE_DELETE_MAX_SECTORS 3
+
+typedef struct {
+    u64 lba;
+    u8 original[SECTOR_SIZE];
+    u8 updated[SECTOR_SIZE];
+    u8 attempted;
+} fat_write_delete_sector;
+
+static bool fat_write_delete_name_equal(const char *a, const char *b) {
+    u32 i = 0;
+    while (a[i] && b[i]) {
+        if (fat_write_upper(a[i]) != fat_write_upper(b[i]))
+            return false;
+        ++i;
+    }
+    return a[i] == b[i];
+}
+
+static int fat_write_delete_sector_get(
+    fat_node_fs *filesystem,
+    fat_write_delete_sector sectors[FAT_WRITE_DELETE_MAX_SECTORS],
+    u8 *sector_count,
+    u64 lba
+) {
+    for (u8 i = 0; i < *sector_count; ++i) {
+        if (sectors[i].lba == lba)
+            return i;
+    }
+
+    if (*sector_count >= FAT_WRITE_DELETE_MAX_SECTORS)
+        return -1;
+
+    u8 index = *sector_count;
+    fat_write_delete_sector *sector = &sectors[index];
+    if (!disk_read_sector(lba, sector->original, filesystem->volume.disk))
+        return -1;
+
+    sector->lba = lba;
+    memcpy(sector->updated, sector->original, SECTOR_SIZE);
+    sector->attempted = 0;
+    ++*sector_count;
+    return index;
+}
+
+static bool fat_write_delete_mark_slot(
+    fat_node_fs *filesystem,
+    fat_write_delete_sector sectors[FAT_WRITE_DELETE_MAX_SECTORS],
+    u8 *sector_count,
+    u64 lba,
+    u16 offset,
+    const u8 expected[32],
+    bool long_name
+) {
+    if (offset > SECTOR_SIZE - FAT_WRITE_ENTRY_SIZE || (offset & 31U) != 0)
+        return false;
+
+    int index = fat_write_delete_sector_get(
+        filesystem, sectors, sector_count, lba
+    );
+    if (index < 0)
+        return false;
+
+    fat_write_delete_sector *sector = &sectors[index];
+    const u8 *current = &sector->original[offset];
+    if (current[0] == 0x00 || current[0] == 0xE5 ||
+        memcmp(current, expected, FAT_WRITE_ENTRY_SIZE) != 0)
+        return false;
+
+    if (long_name) {
+        if (current[11] != 0x0F || current[0] != expected[0] ||
+            current[13] != expected[13])
+            return false;
+    } else if (current[11] & 0x10U) {
+        return false;
+    }
+
+    sector->updated[offset] = 0xE5;
+    return true;
+}
+
+static bool fat_write_delete_chain_valid(
+    const fat_native_volume *volume,
+    const fat_node *node
+) {
+    if (!volume || !node)
+        return false;
+
+    if (node->size == 0)
+        return node->first_cluster == 0;
+
+    if (node->first_cluster < 2 ||
+        node->first_cluster > volume->cluster_count + 1)
+        return false;
+
+    u32 current = node->first_cluster;
+    for (u32 step = 0; step < volume->cluster_count; ++step) {
+        u32 next = 0;
+        int state = fat_native_chain_next(volume, current, &next);
+        if (state == FAT_NATIVE_CHAIN_END)
+            return true;
+        if (state != FAT_NATIVE_CHAIN_NEXT)
+            return false;
+        current = next;
+    }
+
+    return false;
+}
+
+static void fat_write_delete_rollback(
+    fat_node_fs *filesystem,
+    fat_write_delete_sector sectors[FAT_WRITE_DELETE_MAX_SECTORS],
+    u8 sector_count
+) {
+    for (u32 i = sector_count; i > 0; --i) {
+        fat_write_delete_sector *sector = &sectors[i - 1U];
+        if (sector->attempted)
+            disk_write_sector(
+                sector->lba,
+                sector->original,
+                filesystem->volume.disk
+            );
+    }
+}
+
+static bool fat_write_delete_write_sector(
+    fat_node_fs *filesystem,
+    fat_write_delete_sector *sector
+) {
+    u8 verify[SECTOR_SIZE];
+    sector->attempted = 1;
+
+    if (!disk_write_sector(
+            sector->lba,
+            sector->updated,
+            filesystem->volume.disk))
+        return false;
+
+    return disk_read_sector(
+            sector->lba,
+            verify,
+            filesystem->volume.disk) &&
+        memcmp(verify, sector->updated, SECTOR_SIZE) == 0;
+}
+
+static int fat_write_delete_commit(
+    fat_node_fs *filesystem,
+    const fat_node_entry *entry
+) {
+    fat_write_delete_sector sectors[FAT_WRITE_DELETE_MAX_SECTORS];
+    memset(sectors, 0, sizeof(sectors));
+    u8 sector_count = 0;
+
+    if (entry->lfn_count > FAT_NODE_LFN_MAX)
+        return FAT_DELETE_IO_ERROR;
+
+    for (u32 i = 0; i < entry->lfn_count; ++i) {
+        const fat_node_dir_slot *slot = &entry->lfn_slots[i];
+        if (!fat_write_delete_mark_slot(
+                filesystem,
+                sectors,
+                &sector_count,
+                slot->lba,
+                slot->offset,
+                slot->raw,
+                true))
+            return FAT_DELETE_IO_ERROR;
+    }
+
+    int short_index = fat_write_delete_sector_get(
+        filesystem, sectors, &sector_count, entry->short_lba
+    );
+    if (short_index < 0 ||
+        !fat_write_delete_mark_slot(
+            filesystem,
+            sectors,
+            &sector_count,
+            entry->short_lba,
+            entry->short_offset,
+            entry->raw,
+            false))
+        return FAT_DELETE_IO_ERROR;
+
+    for (u32 i = 0; i < sector_count; ++i) {
+        if ((int)i == short_index)
+            continue;
+        if (!fat_write_delete_write_sector(filesystem, &sectors[i])) {
+            fat_write_delete_rollback(filesystem, sectors, sector_count);
+            return FAT_DELETE_IO_ERROR;
+        }
+    }
+
+    if (!fat_write_delete_write_sector(filesystem, &sectors[short_index])) {
+        fat_write_delete_rollback(filesystem, sectors, sector_count);
+        return FAT_DELETE_IO_ERROR;
+    }
+
+    if (entry->node.first_cluster != 0 &&
+        !fat_native_release_chain(
+            &filesystem->volume,
+            entry->node.first_cluster))
+        return FAT_DELETE_CLEANUP_ERROR;
+
+    return FAT_DELETE_OK;
+}
+
+int fat_node_delete_file(fat_node_fs *filesystem, const char *path) {
+    if (!filesystem || !path || !path[0])
+        return FAT_DELETE_INVALID;
+
+    u32 path_length = 0;
+    while (path[path_length]) {
+        if (path_length >= FAT_NODE_NAME_MAX)
+            return FAT_DELETE_INVALID;
+        ++path_length;
+    }
+
+    u32 split = path_length;
+    while (split > 0 && path[split - 1] != '/' && path[split - 1] != '\\')
+        --split;
+
+    u32 name_length = path_length - split;
+    if (name_length == 0 || name_length > FAT_NODE_NAME_MAX)
+        return FAT_DELETE_INVALID;
+
+    char file_name[FAT_NODE_NAME_MAX + 1];
+    memcpy(file_name, path + split, name_length);
+    file_name[name_length] = '\0';
+
+    char parent_path[FAT_NODE_NAME_MAX + 1];
+    u32 parent_length = split == 0 ? 0 : split - 1U;
+    if (parent_length > FAT_NODE_NAME_MAX)
+        return FAT_DELETE_INVALID;
+
+    memcpy(parent_path, path, parent_length);
+    parent_path[parent_length] = '\0';
+
+    fat_node parent;
+    if (parent_length == 0) {
+        if (!fat_node_root(filesystem, &parent))
+            return FAT_DELETE_INVALID;
+    } else if (!fat_node_lookup(filesystem, parent_path, &parent)) {
+        return FAT_DELETE_NOT_FOUND;
+    }
+
+    if (!(parent.attributes & 0x10U))
+        return FAT_DELETE_NOT_FOUND;
+
+    fat_node_dir directory;
+    if (!fat_node_dir_open(filesystem, &parent, &directory))
+        return FAT_DELETE_INVALID;
+
+    fat_node_entry found;
+    bool matched = false;
+    int state;
+
+    while ((state = fat_node_dir_next(&directory, &found)) == FAT_NODE_ENTRY) {
+        if (fat_write_delete_name_equal(file_name, found.name)) {
+            matched = true;
+            break;
+        }
+    }
+
+    if (!matched)
+        return state == FAT_NODE_ERROR
+            ? FAT_DELETE_IO_ERROR
+            : FAT_DELETE_NOT_FOUND;
+
+    if (found.type != FAT_NODE_FILE || (found.node.attributes & 0x10U))
+        return FAT_DELETE_NOT_FILE;
+
+    if (found.node.attributes & 0x01U)
+        return FAT_DELETE_READ_ONLY;
+
+    if (found.lfn_count > FAT_NODE_LFN_MAX ||
+        !fat_write_delete_chain_valid(&filesystem->volume, &found.node))
+        return FAT_DELETE_IO_ERROR;
+
+    return fat_write_delete_commit(filesystem, &found);
+}
+
 int fat_node_write_file(fat_node_fs *filesystem, const char *path, const void *data, u32 length) {
     if (!filesystem || !path || (!data && length != 0))
         return FAT_WRITE_INVALID;

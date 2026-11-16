@@ -31,6 +31,7 @@ typedef struct {
     u16 offset;
     u8 sequence;
     u8 checksum;
+    u8 raw[32];
 } fat_node_dir_slot;
 
 typedef struct {

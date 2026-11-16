@@ -130,28 +130,11 @@ bool fat_native_release_chain(const fat_native_volume *volume, u32 first_cluster
     return current == 0;
 }
 
-bool fat_node_root(const fat_node_fs *fs, fat_node *node) {
-    if (!fs || !node)
-        return false;
-    memset(node, 0, sizeof(*node));
-    node->first_cluster = fs->volume.root_cluster;
-    node->attributes = 0x10;
-    node->is_root = 1;
-    node->fixed_root = fs->volume.fat_bits == FAT_NATIVE_FAT32 ? 0 : 1;
-    return true;
-}
-
-bool fat_node_lookup(const fat_node_fs *fs, const char *path, fat_node *node) {
-    if (!fs || !path || !node)
-        return false;
-    while (*path == '/' || *path == '\\')
-        ++path;
-    if (strcmp(path, "SUBDIR") != 0)
-        return false;
-    memset(node, 0, sizeof(*node));
-    node->first_cluster = 10;
-    node->attributes = 0x10;
-    return true;
+bool fat_native_mount(fat_native_volume *volume, unsigned int disk, unsigned int partition) {
+    (void)volume;
+    (void)disk;
+    (void)partition;
+    return false;
 }
 
 static void check(bool condition, const char *name) {
@@ -245,6 +228,80 @@ static void prepare(u8 bits) {
     memset(image[cluster_lba(10)], 0, SECTOR_SIZE);
 }
 
+
+static u8 short_checksum(const u8 name[11]) {
+    u8 sum = 0;
+    for (u32 i = 0; i < 11; ++i)
+        sum = (u8)(((sum & 1U) ? 0x80U : 0U) + (sum >> 1) + name[i]);
+    return sum;
+}
+
+static void raw_lfn_entry(u8 *entry, u8 sequence, u8 checksum, const u16 units[26]) {
+    static const u8 positions[13] = {
+        1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30
+    };
+    memset(entry, 0xFF, 32);
+    entry[0] = sequence;
+    entry[11] = 0x0F;
+    entry[12] = 0;
+    entry[13] = checksum;
+    entry[26] = 0;
+    entry[27] = 0;
+    u32 ordinal = sequence & 0x1FU;
+    u32 base = (ordinal - 1U) * 13U;
+    for (u32 i = 0; i < 13; ++i)
+        put16(&entry[positions[i]], units[base + i]);
+}
+
+static void run_long_name_delete_variant(u8 bits) {
+    prepare(bits);
+    u64 first_lba = root_lba();
+    u64 second_lba = bits == FAT_NATIVE_FAT32
+        ? cluster_lba(3)
+        : first_lba + 1U;
+
+    if (bits == FAT_NATIVE_FAT32) {
+        links[2] = 3;
+        links[3] = eoc_value();
+    }
+
+    for (u32 i = 0; i < 15; ++i)
+        image[first_lba][i * 32U] = 0xE5;
+
+    char name[] = "Long Document.txt";
+    u16 units[26];
+    for (u32 i = 0; i < 26; ++i)
+        units[i] = 0xFFFF;
+    u32 length = 0;
+    while (name[length]) {
+        units[length] = (u8)name[length];
+        ++length;
+    }
+    units[length] = 0;
+
+    const u8 alias[11] = {
+        'L', 'O', 'N', 'G', 'D', 'O', '~', '1', 'T', 'X', 'T'
+    };
+    u8 checksum = short_checksum(alias);
+    raw_lfn_entry(&image[first_lba][15U * 32U], 0x42, checksum, units);
+    raw_lfn_entry(&image[second_lba][0], 0x01, checksum, units);
+    raw_entry(&image[second_lba][32], (const char *)alias, 0x20, 12, 12);
+    links[12] = eoc_value();
+
+    int result = fat_node_delete_file(&filesystem, "Long Document.txt");
+    check(result == FAT_DELETE_OK,
+        bits == 12 ? "FAT12 long filename deletion" :
+        bits == 16 ? "FAT16 long filename deletion" :
+        "FAT32 long filename deletion");
+    check(
+        image[first_lba][15U * 32U] == 0xE5 &&
+        image[second_lba][0] == 0xE5 &&
+        image[second_lba][32] == 0xE5,
+        "long and short entries deleted across sector boundary"
+    );
+    check(links[12] == 0, "long filename data cluster released");
+}
+
 static void run_variant(u8 bits) {
     prepare(bits);
     u8 original[1300];
@@ -284,18 +341,80 @@ static void run_variant(u8 bits) {
     check(entry && get32(entry + 28) == sizeof(replacement), "replacement size committed");
     check(replacement_cluster != first && links[first] == 0, "old cluster chain released after replacement");
     check(entry && memcmp(image[cluster_lba(replacement_cluster)], replacement, sizeof(replacement)) == 0, "replacement data verified");
+
+    u8 chain_data[1300];
+    memset(chain_data, 0x6B, sizeof(chain_data));
+    result = fat_node_write_file(&filesystem, "CHAIN.BIN", chain_data, sizeof(chain_data));
+    entry = find_entry(root_lba(), "CHAIN   BIN");
+    u32 delete_first_cluster = entry
+        ? (u32)entry[26] | ((u32)entry[27] << 8) |
+          ((u32)entry[20] << 16) | ((u32)entry[21] << 24)
+        : 0;
+    u32 delete_second_cluster = 0;
+    u32 delete_third_cluster = 0;
+    bool delete_chain_ready = result == FAT_WRITE_OK && entry &&
+        fat_native_chain_next(&filesystem.volume, delete_first_cluster, &delete_second_cluster) == FAT_NATIVE_CHAIN_NEXT &&
+        fat_native_chain_next(&filesystem.volume, delete_second_cluster, &delete_third_cluster) == FAT_NATIVE_CHAIN_NEXT;
+    check(delete_chain_ready, "multi-cluster deletion fixture created");
+    int delete_result = delete_chain_ready
+        ? fat_node_delete_file(&filesystem, "CHAIN.BIN")
+        : FAT_DELETE_IO_ERROR;
+    check(delete_result == FAT_DELETE_OK, "multi-cluster file deleted");
+    check(
+        entry && entry[0] == 0xE5 &&
+        links[delete_first_cluster] == 0 &&
+        links[delete_second_cluster] == 0 &&
+        links[delete_third_cluster] == 0,
+        "multi-cluster chain fully released"
+    );
     result = fat_node_write_file(&filesystem, "EMPTY.TXT", 0, 0);
     check(result == FAT_WRITE_OK, "zero-length file created");
     entry = find_entry(root_lba(), "EMPTY   TXT");
     check(entry && get32(entry + 28) == 0 && entry[26] == 0 && entry[27] == 0, "empty file has no cluster chain");
+    check(
+        fat_node_delete_file(&filesystem, "EMPTY.TXT") == FAT_DELETE_OK,
+        "zero-length file deleted"
+    );
+    check(entry && entry[0] == 0xE5, "zero-length directory entry marked deleted");
     raw_entry(&image[root_lba()][96], "LOCKED  TXT", 0x21, 0, 0);
     check(fat_node_write_file(&filesystem, "LOCKED.TXT", replacement, sizeof(replacement)) == FAT_WRITE_READ_ONLY, "read-only file replacement rejected");
+    check(
+        fat_node_delete_file(&filesystem, "LOCKED.TXT") == FAT_DELETE_READ_ONLY,
+        "read-only file deletion rejected"
+    );
+    check(image[root_lba()][96] == 'L', "read-only file entry remains present");
     u8 nested[700];
     memset(nested, 0x5A, sizeof(nested));
     result = fat_node_write_file(&filesystem, "SUBDIR/INNER.BIN", nested, sizeof(nested));
     check(result == FAT_WRITE_OK, "nested directory file created");
     entry = find_entry(cluster_lba(10), "INNER   BIN");
     check(entry && get32(entry + 28) == sizeof(nested), "nested directory entry committed");
+    u32 inner_first_cluster = entry
+        ? (u32)entry[26] | ((u32)entry[27] << 8) |
+          ((u32)entry[20] << 16) | ((u32)entry[21] << 24)
+        : 0;
+    u32 inner_second_cluster = 0;
+    bool inner_chain_ready = entry &&
+        fat_native_chain_next(&filesystem.volume, inner_first_cluster, &inner_second_cluster) == FAT_NATIVE_CHAIN_NEXT;
+    check(inner_chain_ready, "nested multi-cluster file chain created");
+    check(
+        fat_node_delete_file(&filesystem, "SUBDIR/INNER.BIN") == FAT_DELETE_OK,
+        "nested file deleted"
+    );
+    check(
+        entry && entry[0] == 0xE5 &&
+        links[inner_first_cluster] == 0 &&
+        links[inner_second_cluster] == 0,
+        "nested entry removed and its chain released"
+    );
+    check(
+        fat_node_delete_file(&filesystem, "SUBDIR") == FAT_DELETE_NOT_FILE,
+        "directory rejected by file deletion API"
+    );
+    check(
+        fat_node_delete_file(&filesystem, "MISSING.TXT") == FAT_DELETE_NOT_FOUND,
+        "missing file deletion reported"
+    );
     raw_entry(&image[cluster_lba(10)][0], "ITEM0001TXT", 0x20, 0, 0);
     for (u32 i = 1; i < 16; ++i) {
         char name[11] = {'I','T','E','M','0','0','0','0','T','X','T'};
@@ -319,6 +438,9 @@ int main(void) {
     run_variant(FAT_NATIVE_FAT12);
     run_variant(FAT_NATIVE_FAT16);
     run_variant(FAT_NATIVE_FAT32);
+    run_long_name_delete_variant(FAT_NATIVE_FAT12);
+    run_long_name_delete_variant(FAT_NATIVE_FAT16);
+    run_long_name_delete_variant(FAT_NATIVE_FAT32);
     printf("%s: %d failed checks\n", failures ? "FAILED FAT WRITE TESTS" : "ALL FAT WRITE TESTS PASSED", failures);
     return failures ? 1 : 0;
 }
