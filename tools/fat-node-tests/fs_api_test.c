@@ -276,6 +276,22 @@ int main(void) {
     memset(data, 0, sizeof(data));
     check(file && fsize(file) == 8 && fread(data, 8, file) == 8 && memcmp(data, "new-data", 8) == 0, "created file can be reopened and read");
     check(file && fclose(file) == 0, "created file read handle closes");
+
+    char remove_path[] = "|A/NEW.TXT";
+    file = fopen(remove_path, FOPEN_READ);
+    check(file != 0, "file opens before deletion test");
+    check(fremove(remove_path) == FREMOVE_BUSY,
+          "open file cannot be deleted while in use");
+    check(file && fclose(file) == 0, "file handle closes before deletion");
+    check(fremove(remove_path) == FREMOVE_OK,
+          "filesystem API removes a closed file");
+    check(fopen(remove_path, FOPEN_READ) == 0,
+          "deleted file is no longer found");
+    check(fremove("|A/MISSING.TXT") == FREMOVE_NOT_FOUND,
+          "remove reports a missing file");
+    check(fremove("|A/FOLDER") == FREMOVE_NOT_FILE,
+          "file removal does not remove directories");
+
     file = fopen("|A/DOC.TXT", FOPEN_WRITE | FOPEN_APPEND);
     check(file != 0, "fopen opens existing file in append mode");
     check(file && fwrite("!", 1, file) == 1, "fwrite appends to existing contents");

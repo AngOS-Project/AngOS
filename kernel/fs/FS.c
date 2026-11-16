@@ -446,6 +446,106 @@ unsigned long long fsize(FILE *fp) {
     return fs_file_is_open(fp) ? fp->size : 0;
 }
 
+static char fs_path_lower(char value) {
+    if (value >= 'A' && value <= 'Z')
+        return (char)(value - 'A' + 'a');
+    return value;
+}
+
+static bool fs_paths_equal(const char *left, const char *right) {
+    if (!left || !right)
+        return false;
+
+    while (*left && *right) {
+        if (fs_path_lower(*left) != fs_path_lower(*right))
+            return false;
+        ++left;
+        ++right;
+    }
+
+    return *left == *right;
+}
+
+static bool fs_normalize_relative_path(const char *path, char output[FILENAME_LENGTH]) {
+    if (!path || !path[0])
+        return false;
+
+    u32 used = 0;
+    bool previous_was_separator = true;
+
+    while (path[used]) {
+        char value = path[used];
+
+        if (value == '/' || value == '\\') {
+            if (previous_was_separator)
+                return false;
+            value = '/';
+            previous_was_separator = true;
+        } else {
+            if ((u8)value < 32)
+                return false;
+            previous_was_separator = false;
+        }
+
+        if (used >= FILENAME_LENGTH - 1)
+            return false;
+
+        output[used] = value;
+        ++used;
+    }
+
+    if (previous_was_separator)
+        return false;
+
+    output[used] = '\0';
+    return true;
+}
+
+int fremove(char *path) {
+    u8 volume;
+    const char *relative;
+    char node_path[FILENAME_LENGTH];
+
+    if (!fs_parse_volume_path(path, &volume, &relative) ||
+        !fs_normalize_relative_path(relative, node_path))
+        return FREMOVE_INVALID;
+
+    fat_node_fs *filesystem = fs_native_filesystem(volume);
+    if (!filesystem)
+        return FREMOVE_IO_ERROR;
+
+    for (u32 i = 0; i < MAX_OPEN_FILES; ++i) {
+        FILE *open_file = &files[i];
+        char open_path[FILENAME_LENGTH];
+
+        if (!fs_file_is_open(open_file) || open_file->volume != volume)
+            continue;
+
+        if (fs_join_file_path(open_file, open_path) &&
+            fs_paths_equal(open_path, node_path))
+            return FREMOVE_BUSY;
+    }
+
+    int result = fat_node_delete_file(filesystem, node_path);
+
+    switch (result) {
+        case FAT_DELETE_OK:
+            return FREMOVE_OK;
+        case FAT_DELETE_NOT_FOUND:
+            return FREMOVE_NOT_FOUND;
+        case FAT_DELETE_INVALID:
+            return FREMOVE_INVALID;
+        case FAT_DELETE_READ_ONLY:
+            return FREMOVE_READ_ONLY;
+        case FAT_DELETE_CLEANUP_ERROR:
+            return FREMOVE_CLEANUP_ERROR;
+        case FAT_DELETE_NOT_FILE:
+            return FREMOVE_NOT_FILE;
+        default:
+            return FREMOVE_IO_ERROR;
+    }
+}
+
 DIR *opendir(char *path) {
     u8 volume;
     const char *relative;
