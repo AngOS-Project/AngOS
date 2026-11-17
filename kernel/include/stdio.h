@@ -30,15 +30,6 @@
 #define FREMOVE_NOT_FILE -5
 #define FREMOVE_BUSY -6
 
-#define FREMOVE_OK 1
-#define FREMOVE_NOT_FOUND 0
-#define FREMOVE_INVALID -1
-#define FREMOVE_IO_ERROR -2
-#define FREMOVE_READ_ONLY -3
-#define FREMOVE_CLEANUP_ERROR -4
-#define FREMOVE_NOT_FILE -5
-#define FREMOVE_BUSY -6
-
 typedef long long fpos_t;
 
 typedef struct FILE {
@@ -81,7 +72,6 @@ size_t fwrite(const void *ptr, size_t bytes, FILE *fp);
 int fseek(FILE *fp, long long offset, fpos_t position);
 void rewind(FILE *fp);
 unsigned long long fsize(FILE *fp);
-int fremove(char *path);
 int fremove(char *path);
 
 DIR *opendir(char *path);
