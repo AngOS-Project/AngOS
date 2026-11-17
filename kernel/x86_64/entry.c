@@ -350,30 +350,45 @@ static void shell_ec(const char *argument) {
 
 static void shell_rm(const char *argument) {
     if (!argument) {
-        terminal_write("Usage: remove <filename>\n");
+        terminal_write("Usage: remove <path>\n");
         return;
     }
 
     while (*argument == ' ' || *argument == '\t')
         ++argument;
 
-    char filename[13];
+    bool quoted = *argument == '"';
+    if (quoted)
+        ++argument;
+
+    char filename[125];
     u32 length = 0;
 
-    while (*argument &&
-           *argument != ' ' &&
-           *argument != '\t') {
-
+    while (*argument && (quoted ? *argument != '"' :
+           (*argument != ' ' && *argument != '\t'))) {
         if (length >= sizeof(filename) - 1) {
-            terminal_write("remove: filename is too long\n");
+            terminal_write("remove: path is too long\n");
+            return;
+        }
+
+        if ((u8)*argument < 32) {
+            terminal_write("remove: path contains an invalid character\n");
             return;
         }
 
         filename[length++] = *argument++;
     }
 
+    if (quoted) {
+        if (*argument != '"') {
+            terminal_write("remove: missing closing quotation mark\n");
+            return;
+        }
+        ++argument;
+    }
+
     if (length == 0) {
-        terminal_write("Usage: remove <filename>\n");
+        terminal_write("Usage: remove <path>\n");
         return;
     }
 
@@ -383,41 +398,48 @@ static void shell_rm(const char *argument) {
         ++argument;
 
     if (*argument) {
-        terminal_write("Usage: remove <filename>\n");
+        terminal_write("Usage: remove <path>\n");
         return;
     }
 
-    char fat_name[11];
+    char path[128];
+    path[0] = '|';
+    path[1] = 'A';
+    path[2] = '/';
+    memcpy(path + 3, filename, length + 1);
 
-    if (!shell_make_fat83(filename, fat_name)) {
-        terminal_write(
-            "remove: invalid filename; use a FAT 8.3 filename\n"
-        );
-        return;
-    }
+    int result = fremove(path);
 
-    int result = fat16_delete_file(fat_name);
-
-    if (result == FAT16_WRITE_OK) {
-        terminal_write("remove: removed ");
-        terminal_write(filename);
-        terminal_write("\n");
-    } else if (result == FAT16_WRITE_NOT_FOUND) {
-        terminal_write("remove: file not found or entry changed\n");
-    } else if (result == FAT16_WRITE_NOT_FILE) {
-        terminal_write("remove: directories cannot be removed with this command\n");
-    } else if (result == FAT16_WRITE_BAD_FS) {
-        terminal_write("remove: a valid FAT16 filesystem is required\n");
-    } else if (result == FAT16_WRITE_NO_MEMORY) {
-        terminal_write("remove: not enough memory to validate the file\n");
-    } else if (result == FAT16_WRITE_IO_ERROR) {
-        terminal_write("remove: disk I/O or verification failed\n");
-        terminal_write("remove: check the filesystem before continuing\n");
-    } else if (result == FAT16_WRITE_DELETE_CLEANUP_ERROR) {
-        terminal_write("remove: file entry removed, but cluster cleanup failed\n");
-        terminal_write("remove: check the filesystem; some space may remain allocated\n");
-    } else {
-        terminal_write("remove: deletion failed\n");
+    switch (result) {
+        case FREMOVE_OK:
+            terminal_write("remove: PASS - removed ");
+            terminal_write(filename);
+            terminal_write("\n");
+            break;
+        case FREMOVE_NOT_FOUND:
+            terminal_write("remove: file not found\n");
+            break;
+        case FREMOVE_INVALID:
+            terminal_write("remove: invalid path; check the filename and directory path\n");
+            break;
+        case FREMOVE_READ_ONLY:
+            terminal_write("remove: this file is marked read-only\n");
+            break;
+        case FREMOVE_CLEANUP_ERROR:
+            terminal_write("remove: entry removed, but cluster cleanup failed\n");
+            terminal_write("remove: inspect the filesystem before continuing\n");
+            break;
+        case FREMOVE_NOT_FILE:
+            terminal_write("remove: the target is a directory, not a file\n");
+            break;
+        case FREMOVE_BUSY:
+            terminal_write("remove: close the file before deleting it\n");
+            break;
+        case FREMOVE_IO_ERROR:
+        default:
+            terminal_write("remove: filesystem read, write or verification failed\n");
+            terminal_write("remove: inspect the filesystem before continuing\n");
+            break;
     }
 }
 
@@ -1769,13 +1791,15 @@ static void shell_help(const char *topic) {
         terminal_write("          cp notes.txt backup.txt\n");
     } else if (strcmp_local(topic, "rm") == 0) {
         terminal_write("Command : remove | rm\n");
-        terminal_write("Purpose : Delete a file entry and release its FAT16 cluster chain.\n");
-        terminal_write("Usage: remove <filename> | rm <filename>\n");
-        terminal_write("Details : The filename is required. Current support is limited to FAT16\n");
-        terminal_write("          root-directory files with FAT 8.3 names. Directories are not supported.\n");
-        terminal_write("          Deletion is permanent. If disk I/O fails, inspect the filesystem.\n");
-        terminal_write("Example : remove notes.txt\n");
-        terminal_write("          rm notes.txt\n");
+        terminal_write("Purpose : Delete a file through the native FAT filesystem.\n");
+        terminal_write("Usage: remove <path> | rm <path>\n");
+        terminal_write("Details : Supports FAT12, FAT16 and FAT32 files, including nested paths\n");
+        terminal_write("          and long filenames. Put double quotes around names containing spaces.\n");
+        terminal_write("          Directories cannot be removed with this command.\n");
+        terminal_write("          Deletion is permanent. Check the path before confirming.\n");
+        terminal_write("Examples: remove notes.txt\n");
+        terminal_write("          rm documents/notes.txt\n");
+        terminal_write("          remove \"My Notes.txt\"\n");
         } else if (strcmp_local(topic, "wt") == 0) {
         terminal_write("Command : watchtower | wt\n");
         terminal_write("Purpose : Diagnose AngOS, inspect recent events and run health checks.\n");
