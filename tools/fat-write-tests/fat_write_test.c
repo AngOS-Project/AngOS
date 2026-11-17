@@ -352,7 +352,7 @@ static void run_variant(u8 bits) {
     u8 *nested_entry = find_entry(cluster_lba(10), "NESTED     ");
     check(nested_entry && (nested_entry[11] & 0x10U),
           "nested directory entry is stored in its parent");
-    check(image[root_lba()][64] == 0, "directory end marker retained after insertion");
+    check(image[root_lba()][96] == 0, "directory end marker retained after insertion");
     u32 first = 0;
     if (entry)
         first = (u32)entry[26] | ((u32)entry[27] << 8) | ((u32)entry[20] << 16) | ((u32)entry[21] << 24);
