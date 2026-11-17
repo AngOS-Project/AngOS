@@ -10,6 +10,12 @@
 #define FAT_WRITE_READ_ONLY -3
 #define FAT_WRITE_CLEANUP_ERROR -4
 
+#define FAT_MKDIR_OK 1
+#define FAT_MKDIR_NO_SPACE 0
+#define FAT_MKDIR_INVALID -1
+#define FAT_MKDIR_IO_ERROR -2
+#define FAT_MKDIR_EXISTS -3
+
 #define FAT_DELETE_OK 1
 #define FAT_DELETE_NOT_FOUND 0
 #define FAT_DELETE_INVALID -1
@@ -19,6 +25,7 @@
 #define FAT_DELETE_NOT_FILE -5
 
 int fat_node_write_file(fat_node_fs *filesystem, const char *path, const void *data, u32 length);
+int fat_node_create_directory(fat_node_fs *filesystem, const char *path);
 int fat_node_delete_file(fat_node_fs *filesystem, const char *path);
 
 #endif

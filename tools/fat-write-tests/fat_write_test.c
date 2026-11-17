@@ -311,6 +311,47 @@ static void run_variant(u8 bits) {
     check(result == FAT_WRITE_OK, bits == 12 ? "FAT12 create file" : bits == 16 ? "FAT16 create file" : "FAT32 create file");
     u8 *entry = find_entry(root_lba(), "ALPHA   TXT");
     check(entry && get32(entry + 28) == sizeof(original), "directory entry created with correct size");
+    int mkdir_result = fat_node_create_directory(&filesystem, "WORKDIR");
+    check(mkdir_result == FAT_MKDIR_OK, "directory created on native FAT volume");
+    u8 *directory_entry = find_entry(root_lba(), "WORKDIR    ");
+    u32 directory_cluster = directory_entry
+        ? (u32)directory_entry[26] | ((u32)directory_entry[27] << 8) |
+          ((u32)directory_entry[20] << 16) | ((u32)directory_entry[21] << 24)
+        : 0;
+    check(directory_entry && (directory_entry[11] & 0x10U) &&
+          directory_cluster >= 2,
+          "new directory entry stores its cluster and directory attribute");
+    u8 *self_entry = directory_cluster >= 2
+        ? &image[cluster_lba(directory_cluster)][0]
+        : 0;
+    u8 *parent_entry = directory_cluster >= 2
+        ? &image[cluster_lba(directory_cluster)][32]
+        : 0;
+    check(self_entry && self_entry[0] == '.' && self_entry[1] == ' ' &&
+          (self_entry[11] & 0x10U) &&
+          (((u32)self_entry[26] | ((u32)self_entry[27] << 8)) == directory_cluster),
+          "new directory contains a valid self entry");
+    u32 expected_parent_cluster = bits == FAT_NATIVE_FAT32
+        ? filesystem.volume.root_cluster
+        : 0;
+    check(parent_entry && parent_entry[0] == '.' && parent_entry[1] == '.' &&
+          (parent_entry[11] & 0x10U) &&
+          (((u32)parent_entry[26] | ((u32)parent_entry[27] << 8)) == expected_parent_cluster),
+          "new directory contains the correct parent entry");
+    fat_node looked_up_directory;
+    check(fat_node_lookup(&filesystem, "WORKDIR", &looked_up_directory) &&
+          (looked_up_directory.attributes & 0x10U) &&
+          looked_up_directory.first_cluster == directory_cluster,
+          "new directory can be found through native lookup");
+    check(fat_node_create_directory(&filesystem, "WORKDIR") == FAT_MKDIR_EXISTS,
+          "existing directory creation is rejected");
+    check(fat_node_create_directory(&filesystem, "BADLONGDIR") == FAT_MKDIR_INVALID,
+          "unsupported long directory name is rejected");
+    check(fat_node_create_directory(&filesystem, "SUBDIR/NESTED") == FAT_MKDIR_OK,
+          "nested directory created beneath an existing directory");
+    u8 *nested_entry = find_entry(cluster_lba(10), "NESTED     ");
+    check(nested_entry && (nested_entry[11] & 0x10U),
+          "nested directory entry is stored in its parent");
     check(image[root_lba()][64] == 0, "directory end marker retained after insertion");
     u32 first = 0;
     if (entry)

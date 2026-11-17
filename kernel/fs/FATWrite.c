@@ -376,6 +376,67 @@ static int fat_write_commit_entry(const fat_node_fs *filesystem, fat_write_slot 
 }
 
 
+static void fat_write_init_directory_entry(
+    u8 entry[FAT_WRITE_ENTRY_SIZE],
+    const u8 name[11],
+    u32 cluster,
+    const fat_native_volume *volume
+) {
+    memset(entry, 0, FAT_WRITE_ENTRY_SIZE);
+    memcpy(entry, name, 11);
+    entry[11] = 0x10U;
+    if (volume->fat_bits == FAT_NATIVE_FAT32)
+        fat_write_put16(&entry[20], (u16)(cluster >> 16));
+    fat_write_put16(&entry[26], (u16)cluster);
+}
+
+static int fat_write_commit_directory_entry(
+    const fat_node_fs *filesystem,
+    fat_write_slot *slot,
+    const u8 name[11],
+    u32 cluster
+) {
+    if (!filesystem || !slot || !slot->found || slot->existing ||
+        slot->offset > SECTOR_SIZE - FAT_WRITE_ENTRY_SIZE)
+        return 0;
+
+    u8 sector[SECTOR_SIZE];
+    if (!disk_read_sector(slot->lba, sector, filesystem->volume.disk))
+        return 0;
+
+    if (slot->was_end && slot->next_valid && slot->next_lba != slot->lba) {
+        u8 next_sector[SECTOR_SIZE];
+        if (slot->next_offset > SECTOR_SIZE - FAT_WRITE_ENTRY_SIZE ||
+            !disk_read_sector(slot->next_lba, next_sector, filesystem->volume.disk))
+            return 0;
+        memset(&next_sector[slot->next_offset], 0, FAT_WRITE_ENTRY_SIZE);
+        if (!disk_write_sector(slot->next_lba, next_sector, filesystem->volume.disk))
+            return -1;
+    }
+
+    u8 *entry = &sector[slot->offset];
+    if ((entry[0] != 0x00U && entry[0] != 0xE5U) ||
+        memcmp(entry, slot->raw, FAT_WRITE_ENTRY_SIZE) != 0)
+        return 0;
+
+    fat_write_init_directory_entry(entry, name, cluster, &filesystem->volume);
+
+    if (slot->was_end && slot->next_valid && slot->next_lba == slot->lba) {
+        if (slot->next_offset > SECTOR_SIZE - FAT_WRITE_ENTRY_SIZE)
+            return 0;
+        memset(&sector[slot->next_offset], 0, FAT_WRITE_ENTRY_SIZE);
+    }
+
+    if (!disk_write_sector(slot->lba, sector, filesystem->volume.disk))
+        return -1;
+
+    u8 verify[SECTOR_SIZE];
+    if (!disk_read_sector(slot->lba, verify, filesystem->volume.disk))
+        return -1;
+
+    return memcmp(&verify[slot->offset], entry, FAT_WRITE_ENTRY_SIZE) == 0 ? 1 : -1;
+}
+
 #define FAT_WRITE_DELETE_MAX_SECTORS 3
 
 typedef struct {
@@ -733,4 +794,112 @@ int fat_node_write_file(fat_node_fs *filesystem, const char *path, const void *d
     if (old_cluster && old_cluster != new_cluster && !fat_native_release_chain(&filesystem->volume, old_cluster))
         return FAT_WRITE_CLEANUP_ERROR;
     return FAT_WRITE_OK;
+}
+
+int fat_node_create_directory(fat_node_fs *filesystem, const char *path) {
+    if (!filesystem || !path || !path[0])
+        return FAT_MKDIR_INVALID;
+
+    u32 path_length = 0;
+    while (path[path_length]) {
+        if (path_length >= FAT_NODE_NAME_MAX)
+            return FAT_MKDIR_INVALID;
+        ++path_length;
+    }
+
+    u32 split = path_length;
+    while (split > 0 && path[split - 1] != '/' && path[split - 1] != '\\')
+        --split;
+
+    u32 name_length = path_length - split;
+    if (name_length == 0 || name_length >= FAT_NODE_NAME_MAX)
+        return FAT_MKDIR_INVALID;
+
+    char directory_name[FAT_NODE_NAME_MAX + 1];
+    memcpy(directory_name, path + split, name_length);
+    directory_name[name_length] = '\0';
+
+    u8 short_name[11];
+    if (!fat_write_encode_name(directory_name, short_name))
+        return FAT_MKDIR_INVALID;
+
+    fat_node existing;
+    if (fat_node_lookup(filesystem, path, &existing))
+        return FAT_MKDIR_EXISTS;
+
+    char parent_path[FAT_NODE_NAME_MAX + 1];
+    fat_node parent;
+    u32 parent_length = split == 0 ? 0 : split - 1U;
+
+    if (parent_length == 0) {
+        if (!fat_node_root(filesystem, &parent))
+            return FAT_MKDIR_INVALID;
+    } else {
+        if (parent_length >= sizeof(parent_path))
+            return FAT_MKDIR_INVALID;
+        memcpy(parent_path, path, parent_length);
+        parent_path[parent_length] = '\0';
+        if (!fat_node_lookup(filesystem, parent_path, &parent))
+            return FAT_MKDIR_INVALID;
+    }
+
+    if (!(parent.attributes & 0x10U))
+        return FAT_MKDIR_INVALID;
+
+    fat_write_slot slot;
+    int slot_state = fat_write_find_slot(filesystem, &parent, short_name, &slot);
+    if (slot_state == FAT_WRITE_IO_ERROR)
+        return FAT_MKDIR_IO_ERROR;
+    if (slot_state == FAT_WRITE_INVALID)
+        return FAT_MKDIR_INVALID;
+    if (slot_state == FAT_WRITE_NO_SPACE && !slot.found)
+        return FAT_MKDIR_NO_SPACE;
+    if (slot.existing)
+        return FAT_MKDIR_EXISTS;
+
+    u32 new_cluster = 0;
+    if (!fat_native_allocate_chain(&filesystem->volume, 1, &new_cluster) || new_cluster < 2)
+        return FAT_MKDIR_NO_SPACE;
+
+    const u8 self_name[11] = {
+        '.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '
+    };
+    const u8 parent_name[11] = {
+        '.', '.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '
+    };
+    u32 parent_cluster = parent.fixed_root ? 0 : parent.first_cluster;
+
+    for (u8 sector_index = 0; sector_index < filesystem->volume.sectors_per_cluster; ++sector_index) {
+        u8 sector[SECTOR_SIZE];
+        memset(sector, 0, sizeof(sector));
+
+        if (sector_index == 0) {
+            fat_write_init_directory_entry(
+                &sector[0], self_name, new_cluster, &filesystem->volume
+            );
+            fat_write_init_directory_entry(
+                &sector[FAT_WRITE_ENTRY_SIZE], parent_name, parent_cluster,
+                &filesystem->volume
+            );
+        }
+
+        u64 lba;
+        if (!fat_native_cluster_sector(&filesystem->volume, new_cluster, sector_index, &lba) ||
+            !disk_write_sector(lba, sector, filesystem->volume.disk)) {
+            fat_native_release_chain(&filesystem->volume, new_cluster);
+            return FAT_MKDIR_IO_ERROR;
+        }
+    }
+
+    int committed = fat_write_commit_directory_entry(
+        filesystem, &slot, short_name, new_cluster
+    );
+
+    if (committed != 1) {
+        if (committed == 0)
+            fat_native_release_chain(&filesystem->volume, new_cluster);
+        return FAT_MKDIR_IO_ERROR;
+    }
+
+    return FAT_MKDIR_OK;
 }
