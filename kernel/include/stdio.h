@@ -30,6 +30,12 @@
 #define FREMOVE_NOT_FILE -5
 #define FREMOVE_BUSY -6
 
+#define FMKDIR_OK 1
+#define FMKDIR_NO_SPACE 0
+#define FMKDIR_INVALID -1
+#define FMKDIR_IO_ERROR -2
+#define FMKDIR_EXISTS -3
+
 typedef long long fpos_t;
 
 typedef struct FILE {
@@ -73,6 +79,7 @@ int fseek(FILE *fp, long long offset, fpos_t position);
 void rewind(FILE *fp);
 unsigned long long fsize(FILE *fp);
 int fremove(char *path);
+int fmkdir(char *path);
 
 DIR *opendir(char *path);
 dirent *readdir(DIR *dir);

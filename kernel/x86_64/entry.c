@@ -443,6 +443,78 @@ static void shell_rm(const char *argument) {
     }
 }
 
+
+static void shell_mkdir(const char *argument) {
+    if (!argument) {
+        terminal_write("Usage: mkdir <directory-path>\n");
+        return;
+    }
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    char directory_name[124];
+    u32 length = 0;
+
+    while (*argument && *argument != ' ' && *argument != '\t') {
+        if (length >= sizeof(directory_name) - 1) {
+            terminal_write("mkdir: directory path is too long\n");
+            return;
+        }
+
+        if ((u8)*argument < 32) {
+            terminal_write("mkdir: directory path contains an invalid character\n");
+            return;
+        }
+
+        directory_name[length++] = *argument++;
+    }
+
+    if (length == 0) {
+        terminal_write("Usage: mkdir <directory-path>\n");
+        return;
+    }
+
+    directory_name[length] = '\0';
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    if (*argument) {
+        terminal_write("Usage: mkdir <directory-path>\n");
+        return;
+    }
+
+    char path[128];
+    path[0] = '|';
+    path[1] = 'A';
+    path[2] = '/';
+    memcpy(path + 3, directory_name, length + 1);
+
+    int result = fmkdir(path);
+
+    switch (result) {
+        case FMKDIR_OK:
+            terminal_write("mkdir: PASS - created ");
+            terminal_write(directory_name);
+            terminal_write("\n");
+            break;
+        case FMKDIR_EXISTS:
+            terminal_write("mkdir: a file or directory already has that name\n");
+            break;
+        case FMKDIR_NO_SPACE:
+            terminal_write("mkdir: not enough free space for the directory\n");
+            break;
+        case FMKDIR_INVALID:
+            terminal_write("mkdir: invalid name or parent directory; use FAT 8.3 names\n");
+            break;
+        case FMKDIR_IO_ERROR:
+        default:
+            terminal_write("mkdir: filesystem read or write failed\n");
+            break;
+    }
+}
+
 static void shell_cp(const char *argument) {
     if (!argument) {
         terminal_write("Usage: copy <source-file> <destination-name>\n");
@@ -1609,8 +1681,8 @@ static const char *shell_normalize_command(const char *command) {
     u32 end = 0;
     while (input[end] && input[end] != ' ' && input[end] != '\t')
         ++end;
-    static const char *full_names[] = {"help", "clear", "version", "list", "cat", "status", "new", "echo", "edit", "copy", "remove", "watchtower"};
-    static const char *aliases[] = {"h", "cls", "ver", "ls", "ct", "stat", "nw", "ec", "ed", "cp", "rm", "wt"};
+    static const char *full_names[] = {"help", "clear", "version", "list", "cat", "status", "new", "mkdir", "echo", "edit", "copy", "remove", "watchtower"};
+    static const char *aliases[] = {"h", "cls", "ver", "ls", "ct", "stat", "nw", "md", "ec", "ed", "cp", "rm", "wt"};
     for (u32 k = 0; k < sizeof(full_names) / sizeof(full_names[0]); ++k) {
         u32 length = 0;
         while (full_names[k][length])
@@ -1664,6 +1736,7 @@ static void shell_help(const char *topic) {
         terminal_write("cat        ct       cat <file>                     Display file contents\n");
         terminal_write("status     stat     status <path>                  Show file or directory\n");
         terminal_write("new        nw       new <filename>                 Create an empty file\n");
+        terminal_write("mkdir      md       mkdir <directory-path>        Create a directory\n");
         terminal_write("echo       ec       echo [text]                    Print text or a blank line\n");
         terminal_write("edit       ed       edit <file> <action> [text]    Edit one file line\n");
         terminal_write("copy       cp       copy <source> <destination>   Copy a file\n");
@@ -1749,6 +1822,15 @@ static void shell_help(const char *topic) {
         terminal_write("          Existing files are left unchanged.\n");
         terminal_write("Example : new notes.txt\n");
         terminal_write("          nw notes.txt\n");
+    } else if (strcmp_local(topic, "md") == 0) {
+        terminal_write("Command : mkdir | md\n");
+        terminal_write("Purpose : Create a directory through the native FAT filesystem.\n");
+        terminal_write("Usage: mkdir <directory-path> | md <directory-path>\n");
+        terminal_write("Details : Supports FAT12, FAT16 and FAT32 volumes and nested paths.\n");
+        terminal_write("          Directory names currently use the FAT 8.3 format.\n");
+        terminal_write("          The parent directory must already exist.\n");
+        terminal_write("Examples: mkdir PROJECT\n");
+        terminal_write("          md DOCUMENTS/WORK\n");
     } else if (strcmp_local(topic, "ec") == 0) {
         terminal_write("Command : echo | ec\n");
         terminal_write("Purpose : Print text to the terminal.\n");
@@ -2198,6 +2280,18 @@ void execute_command(const char *cmd) {
         shell_nw(
             cmd + 3
         );
+
+    } else if (
+        strcmp_local(cmd, "md") == 0
+    ) {
+
+        shell_mkdir("");
+
+    } else if (
+        starts_with_local(cmd, "md ")
+    ) {
+
+        shell_mkdir(cmd + 3);
 
     } else if (
         strcmp_local(cmd, "ec") == 0

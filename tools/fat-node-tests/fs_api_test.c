@@ -268,6 +268,34 @@ int main(void) {
     entry = directory ? readdir(directory) : 0;
     check(entry && strcmp(entry->name, "INNER.TXT") == 0, "nested directory enumeration");
     check(directory && closedir(directory) == 0, "nested directory close");
+
+    char root_mkdir_path[] = "|A/WORK";
+    check(fmkdir(root_mkdir_path) == FMKDIR_OK,
+          "filesystem API creates a root directory");
+    check(image[6][64] == 'W' && image[6][75] == 0x10U,
+          "root directory entry has the correct name and attributes");
+    check(image[6][96] == 0,
+          "root directory end marker remains after creation");
+    check(fmkdir(root_mkdir_path) == FMKDIR_EXISTS,
+          "creating an existing directory is rejected");
+
+    char nested_mkdir_path[] = "|A/FOLDER/CHILD";
+    check(fmkdir(nested_mkdir_path) == FMKDIR_OK,
+          "filesystem API creates a nested directory");
+    check(image[14][32] == 'C' && image[14][43] == 0x10U,
+          "nested directory entry is written in its parent");
+    DIR *created_directory = opendir(nested_mkdir_path);
+    check(created_directory != 0,
+          "new nested directory can be opened");
+    check(created_directory && closedir(created_directory) == 0,
+          "new nested directory handle closes");
+
+    check(fmkdir("|A/FOLDER/INNER.TXT/CHILD") == FMKDIR_INVALID,
+          "directory creation rejects a file as its parent");
+    check(fmkdir("|A/MISSING/CHILD") == FMKDIR_INVALID,
+          "directory creation rejects a missing parent");
+    check(fmkdir("|A//BROKEN") == FMKDIR_INVALID,
+          "directory creation rejects repeated separators");
     file = fopen("|A/NEW.TXT", FOPEN_WRITE | FOPEN_CREATE);
     check(file != 0, "fopen creates a new file for writing");
     check(file && fwrite("new-data", 8, file) == 8, "fwrite writes new file contents");

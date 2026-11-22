@@ -546,6 +546,36 @@ int fremove(char *path) {
     }
 }
 
+
+int fmkdir(char *path) {
+    u8 volume;
+    const char *relative;
+    char node_path[FILENAME_LENGTH];
+
+    if (!fs_parse_volume_path(path, &volume, &relative) ||
+        !fs_normalize_relative_path(relative, node_path))
+        return FMKDIR_INVALID;
+
+    fat_node_fs *filesystem = fs_native_filesystem(volume);
+    if (!filesystem)
+        return FMKDIR_IO_ERROR;
+
+    int result = fat_node_create_directory(filesystem, node_path);
+
+    switch (result) {
+        case FAT_MKDIR_OK:
+            return FMKDIR_OK;
+        case FAT_MKDIR_NO_SPACE:
+            return FMKDIR_NO_SPACE;
+        case FAT_MKDIR_EXISTS:
+            return FMKDIR_EXISTS;
+        case FAT_MKDIR_INVALID:
+            return FMKDIR_INVALID;
+        default:
+            return FMKDIR_IO_ERROR;
+    }
+}
+
 DIR *opendir(char *path) {
     u8 volume;
     const char *relative;
