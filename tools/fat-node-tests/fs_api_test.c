@@ -296,6 +296,31 @@ int main(void) {
           "directory creation rejects a missing parent");
     check(fmkdir("|A//BROKEN") == FMKDIR_INVALID,
           "directory creation rejects repeated separators");
+
+    u32 work_cluster = (u32)image[6][90] |
+        ((u32)image[6][91] << 8);
+    DIR *open_work = opendir("|A/WORK");
+    check(open_work != 0, "new directory opens before removal");
+    check(frmdir("|A/WORK") == FRMDIR_BUSY,
+          "open directory cannot be removed");
+    check(open_work && closedir(open_work) == 0,
+          "open directory closes before removal");
+    check(frmdir("|A/WORK") == FRMDIR_OK,
+          "filesystem API removes an empty directory");
+    check(image[6][64] == 0xE5,
+          "removed directory entry is marked deleted");
+    check(work_cluster >= 2 && work_cluster < MAX_CLUSTERS &&
+          links[work_cluster] == 0,
+          "removed directory cluster is released");
+    check(frmdir("|A/FOLDER") == FRMDIR_NOT_EMPTY,
+          "non-empty directory removal is rejected");
+    check(frmdir("|A/DOC.TXT") == FRMDIR_NOT_DIR,
+          "directory removal rejects a file");
+    check(frmdir("|A/MISSING") == FRMDIR_NOT_FOUND,
+          "directory removal reports a missing path");
+    check(frmdir("|A/") == FRMDIR_INVALID,
+          "filesystem root cannot be removed");
+
     file = fopen("|A/NEW.TXT", FOPEN_WRITE | FOPEN_CREATE);
     check(file != 0, "fopen creates a new file for writing");
     check(file && fwrite("new-data", 8, file) == 8, "fwrite writes new file contents");

@@ -515,6 +515,102 @@ static void shell_mkdir(const char *argument) {
     }
 }
 
+
+static void shell_rmdir(const char *argument) {
+    if (!argument) {
+        terminal_write("Usage: rmdir <directory-path>\n");
+        return;
+    }
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    bool quoted = *argument == '"';
+    if (quoted)
+        ++argument;
+
+    char directory_name[125];
+    u32 length = 0;
+
+    while (*argument && (quoted ? *argument != '"' :
+           (*argument != ' ' && *argument != '\t'))) {
+        if (length >= sizeof(directory_name) - 1) {
+            terminal_write("rmdir: directory path is too long\n");
+            return;
+        }
+
+        if ((u8)*argument < 32) {
+            terminal_write("rmdir: invalid directory path\n");
+            return;
+        }
+
+        directory_name[length++] = *argument++;
+    }
+
+    if (quoted) {
+        if (*argument != '"') {
+            terminal_write("rmdir: missing closing quotation mark\n");
+            return;
+        }
+        ++argument;
+    }
+
+    if (length == 0) {
+        terminal_write("Usage: rmdir <directory-path>\n");
+        return;
+    }
+
+    directory_name[length] = '\0';
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    if (*argument) {
+        terminal_write("Usage: rmdir <directory-path>\n");
+        return;
+    }
+
+    char path[128];
+    path[0] = '|';
+    path[1] = 'A';
+    path[2] = '/';
+    memcpy(path + 3, directory_name, length + 1);
+
+    int result = frmdir(path);
+
+    switch (result) {
+        case FRMDIR_OK:
+            terminal_write("rmdir: PASS - removed ");
+            terminal_write(directory_name);
+            terminal_write("\n");
+            break;
+        case FRMDIR_NOT_FOUND:
+            terminal_write("rmdir: directory not found\n");
+            break;
+        case FRMDIR_INVALID:
+            terminal_write("rmdir: invalid path; the root cannot be removed\n");
+            break;
+        case FRMDIR_READ_ONLY:
+            terminal_write("rmdir: directory is marked read-only\n");
+            break;
+        case FRMDIR_NOT_DIR:
+            terminal_write("rmdir: target is not a directory\n");
+            break;
+        case FRMDIR_NOT_EMPTY:
+            terminal_write("rmdir: directory is not empty\n");
+            break;
+        case FRMDIR_BUSY:
+            terminal_write("rmdir: close the directory before removing it\n");
+            break;
+        case FRMDIR_CLEANUP_ERROR:
+            terminal_write("rmdir: entry removed, but cluster cleanup failed\n");
+            break;
+        default:
+            terminal_write("rmdir: filesystem read, write or verification failed\n");
+            break;
+    }
+}
+
 static void shell_cp(const char *argument) {
     if (!argument) {
         terminal_write("Usage: copy <source-file> <destination-name>\n");
@@ -1681,8 +1777,8 @@ static const char *shell_normalize_command(const char *command) {
     u32 end = 0;
     while (input[end] && input[end] != ' ' && input[end] != '\t')
         ++end;
-    static const char *full_names[] = {"help", "clear", "version", "list", "cat", "status", "new", "mkdir", "echo", "edit", "copy", "remove", "watchtower"};
-    static const char *aliases[] = {"h", "cls", "ver", "ls", "ct", "stat", "nw", "md", "ec", "ed", "cp", "rm", "wt"};
+    static const char *full_names[] = {"help", "clear", "version", "list", "cat", "status", "new", "mkdir", "echo", "edit", "copy", "remove", "rmdir", "watchtower"};
+    static const char *aliases[] = {"h", "cls", "ver", "ls", "ct", "stat", "nw", "md", "ec", "ed", "cp", "rm", "rd", "wt"};
     for (u32 k = 0; k < sizeof(full_names) / sizeof(full_names[0]); ++k) {
         u32 length = 0;
         while (full_names[k][length])
@@ -1737,6 +1833,7 @@ static void shell_help(const char *topic) {
         terminal_write("status     stat     status <path>                  Show file or directory\n");
         terminal_write("new        nw       new <filename>                 Create an empty file\n");
         terminal_write("mkdir      md       mkdir <directory-path>        Create a directory\n");
+        terminal_write("rmdir      rd       rmdir <directory-path>        Remove an empty directory\n");
         terminal_write("echo       ec       echo [text]                    Print text or a blank line\n");
         terminal_write("edit       ed       edit <file> <action> [text]    Edit one file line\n");
         terminal_write("copy       cp       copy <source> <destination>   Copy a file\n");
@@ -1831,6 +1928,15 @@ static void shell_help(const char *topic) {
         terminal_write("          The parent directory must already exist.\n");
         terminal_write("Examples: mkdir PROJECT\n");
         terminal_write("          md DOCUMENTS/WORK\n");
+    } else if (strcmp_local(topic, "rd") == 0) {
+        terminal_write("Command : rmdir | rd\n");
+        terminal_write("Purpose : Remove an empty directory through the native FAT filesystem.\n");
+        terminal_write("Usage: rmdir <directory-path> | rd <directory-path>\n");
+        terminal_write("Details : Supports FAT12, FAT16 and FAT32 volumes.\n");
+        terminal_write("          Non-empty directories and the filesystem root are protected.\n");
+        terminal_write("          Close the directory before removing it.\n");
+        terminal_write("Example : rmdir PROJECT\n");
+        terminal_write("          rd DOCUMENTS/WORK\n");
     } else if (strcmp_local(topic, "ec") == 0) {
         terminal_write("Command : echo | ec\n");
         terminal_write("Purpose : Print text to the terminal.\n");
@@ -2292,6 +2398,18 @@ void execute_command(const char *cmd) {
     ) {
 
         shell_mkdir(cmd + 3);
+
+    } else if (
+        strcmp_local(cmd, "rd") == 0
+    ) {
+
+        shell_rmdir("");
+
+    } else if (
+        starts_with_local(cmd, "rd ")
+    ) {
+
+        shell_rmdir(cmd + 3);
 
     } else if (
         strcmp_local(cmd, "ec") == 0

@@ -23,6 +23,16 @@
 #define FREMOVE_CLEANUP_ERROR -4
 #define FREMOVE_NOT_FILE -5
 #define FREMOVE_BUSY -6
+
+#define FRMDIR_OK 1
+#define FRMDIR_NOT_FOUND 0
+#define FRMDIR_INVALID -1
+#define FRMDIR_IO_ERROR -2
+#define FRMDIR_READ_ONLY -3
+#define FRMDIR_CLEANUP_ERROR -4
+#define FRMDIR_NOT_DIR -5
+#define FRMDIR_NOT_EMPTY -6
+#define FRMDIR_BUSY -7
 typedef long long fpos_t;
 typedef struct FILE {
     u8 used;
@@ -62,6 +72,7 @@ int fseek(FILE *fp, long long offset, fpos_t position);
 void rewind(FILE *fp);
 unsigned long long fsize(FILE *fp);
 int fremove(char *path);
+int frmdir(char *path);
 DIR *opendir(char *path);
 dirent *readdir(DIR *dir);
 int closedir(DIR *dir);

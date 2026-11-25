@@ -576,6 +576,70 @@ int fmkdir(char *path) {
     }
 }
 
+
+int frmdir(char *path) {
+    u8 volume;
+    const char *relative;
+    char node_path[FILENAME_LENGTH];
+
+    if (!fs_parse_volume_path(path, &volume, &relative) ||
+        !fs_normalize_relative_path(relative, node_path))
+        return FRMDIR_INVALID;
+
+    fat_node_fs *filesystem = fs_native_filesystem(volume);
+    if (!filesystem)
+        return FRMDIR_IO_ERROR;
+
+    fat_node target;
+    if (!fat_node_lookup(filesystem, node_path, &target))
+        return FRMDIR_NOT_FOUND;
+
+    if (target.is_root)
+        return FRMDIR_INVALID;
+
+    if (target.attributes & 0x10U) {
+        for (u32 i = 0; i < MAX_OPEN_DIRS; ++i) {
+            DIR *open_dir = &dir_table[i];
+
+            if (!open_dir->used ||
+                open_dir->volume != volume ||
+                (open_dir->reserved != DIR_STATE_NATIVE &&
+                 open_dir->reserved != DIR_STATE_ERROR))
+                continue;
+
+            fat_node_dir *iterator =
+                (fat_node_dir *)(uintptr_t)open_dir->fsdata[0];
+
+            if (iterator &&
+                iterator->directory.first_cluster == target.first_cluster &&
+                iterator->directory.fixed_root == target.fixed_root &&
+                iterator->directory.is_root == target.is_root)
+                return FRMDIR_BUSY;
+        }
+    }
+
+    int result = fat_node_delete_directory(filesystem, node_path);
+
+    switch (result) {
+        case FAT_RMDIR_OK:
+            return FRMDIR_OK;
+        case FAT_RMDIR_NOT_FOUND:
+            return FRMDIR_NOT_FOUND;
+        case FAT_RMDIR_INVALID:
+            return FRMDIR_INVALID;
+        case FAT_RMDIR_READ_ONLY:
+            return FRMDIR_READ_ONLY;
+        case FAT_RMDIR_CLEANUP_ERROR:
+            return FRMDIR_CLEANUP_ERROR;
+        case FAT_RMDIR_NOT_DIR:
+            return FRMDIR_NOT_DIR;
+        case FAT_RMDIR_NOT_EMPTY:
+            return FRMDIR_NOT_EMPTY;
+        default:
+            return FRMDIR_IO_ERROR;
+    }
+}
+
 DIR *opendir(char *path) {
     u8 volume;
     const char *relative;
