@@ -290,7 +290,16 @@ int fat_node_dir_next(fat_node_dir *directory, fat_node_entry *entry) {
 
         if (entry->name[0] == '\0')
             continue;
-        if (entry->type == FAT_NODE_DIRECTORY && entry->node.first_cluster < 2)
+        bool parent_is_fixed_root =
+            entry->type == FAT_NODE_DIRECTORY &&
+            entry->node.first_cluster == 0 &&
+            entry->name[0] == '.' &&
+            entry->name[1] == '.' &&
+            entry->name[2] == '\0';
+
+        if (entry->type == FAT_NODE_DIRECTORY &&
+            entry->node.first_cluster < 2 &&
+            !parent_is_fixed_root)
             return FAT_NODE_ERROR;
         if (entry->type == FAT_NODE_FILE && entry->node.size != 0 && entry->node.first_cluster < 2)
             return FAT_NODE_ERROR;

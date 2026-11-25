@@ -301,6 +301,12 @@ int main(void) {
         ((u32)image[6][91] << 8);
     DIR *open_work = opendir("|A/WORK");
     check(open_work != 0, "new directory opens before removal");
+    dirent *work_entry = open_work ? readdir(open_work) : 0;
+    check(work_entry && strcmp(work_entry->name, ".") == 0,
+          "new directory contains its current-directory entry");
+    work_entry = open_work ? readdir(open_work) : 0;
+    check(work_entry && strcmp(work_entry->name, "..") == 0,
+          "new directory accepts its root-parent entry");
     check(frmdir("|A/WORK") == FRMDIR_BUSY,
           "open directory cannot be removed");
     check(open_work && closedir(open_work) == 0,
