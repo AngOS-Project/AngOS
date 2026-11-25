@@ -328,6 +328,8 @@ int main(void) {
     memset(data, 0, sizeof(data));
     check(file && fsize(file) == 6 && fread(data, 6, file) == 6 && memcmp(data, "hello!", 6) == 0, "append preserves old data and adds new data");
     check(file && fclose(file) == 0, "appended file read handle closes");
+    u32 previous_doc_cluster = (u32)image[6][26] |
+        ((u32)image[6][27] << 8);
     file = fopen("|A/DOC.TXT", FOPEN_WRITE | FOPEN_TRUNCATE);
     check(file && fsize(file) == 0, "truncate mode starts with an empty file");
     check(file && fwrite("replacement", 11, file) == 11, "fwrite replaces file contents");
@@ -335,7 +337,10 @@ int main(void) {
     file = fopen("|A/DOC.TXT", 0);
     memset(data, 0, sizeof(data));
     check(file && fsize(file) == 11 && fread(data, 11, file) == 11 && memcmp(data, "replacement", 11) == 0, "replaced file can be reopened and read");
-    check(links[5] == 0, "replacement releases the previous cluster chain");
+    check(previous_doc_cluster >= 2 &&
+          previous_doc_cluster < MAX_CLUSTERS &&
+          links[previous_doc_cluster] == 0,
+          "replacement releases the previous cluster chain");
     check(file && fclose(file) == 0, "replaced file read handle closes");
     file = fopen("|A/DOC.TXT", FOPEN_WRITE | FOPEN_TRUNCATE);
     check(file != 0, "fopen opens a file for an abortable write");
