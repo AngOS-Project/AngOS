@@ -24,15 +24,29 @@
 #define FREMOVE_NOT_FILE -5
 #define FREMOVE_BUSY -6
 
-#define FRMDIR_OK 1
-#define FRMDIR_NOT_FOUND 0
-#define FRMDIR_INVALID -1
-#define FRMDIR_IO_ERROR -2
-#define FRMDIR_READ_ONLY -3
-#define FRMDIR_CLEANUP_ERROR -4
-#define FRMDIR_NOT_DIR -5
-#define FRMDIR_NOT_EMPTY -6
-#define FRMDIR_BUSY -7
+#define FREMOVEDIRECTORY_OK 1
+#define FREMOVEDIRECTORY_NOT_FOUND 0
+#define FREMOVEDIRECTORY_INVALID -1
+#define FREMOVEDIRECTORY_IO_ERROR -2
+#define FREMOVEDIRECTORY_READ_ONLY -3
+#define FREMOVEDIRECTORY_CLEANUP_ERROR -4
+#define FREMOVEDIRECTORY_NOT_DIR -5
+#define FREMOVEDIRECTORY_NOT_EMPTY -6
+#define FREMOVEDIRECTORY_BUSY -7
+#define FNEWDIRECTORY_OK 1
+#define FNEWDIRECTORY_NO_SPACE 0
+#define FNEWDIRECTORY_INVALID -1
+#define FNEWDIRECTORY_IO_ERROR -2
+#define FNEWDIRECTORY_EXISTS -3
+
+#define FRENAME_OK 1
+#define FRENAME_NOT_FOUND 0
+#define FRENAME_INVALID -1
+#define FRENAME_IO_ERROR -2
+#define FRENAME_READ_ONLY -3
+#define FRENAME_EXISTS -4
+#define FRENAME_BUSY -5
+
 typedef long long fpos_t;
 typedef struct FILE {
     u8 used;
@@ -72,7 +86,11 @@ int fseek(FILE *fp, long long offset, fpos_t position);
 void rewind(FILE *fp);
 unsigned long long fsize(FILE *fp);
 int fremove(char *path);
-int frmdir(char *path);
+int fremovedirectory(char *path);
+int fnewdirectory(char *path);
+
+int frename(char *path, char *new_name);
+
 DIR *opendir(char *path);
 dirent *readdir(DIR *dir);
 int closedir(DIR *dir);

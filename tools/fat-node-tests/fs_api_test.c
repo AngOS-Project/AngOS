@@ -270,17 +270,17 @@ int main(void) {
     check(directory && closedir(directory) == 0, "nested directory close");
 
     char root_mkdir_path[] = "|A/WORK";
-    check(fmkdir(root_mkdir_path) == FMKDIR_OK,
+    check(fnewdirectory(root_mkdir_path) == FNEWDIRECTORY_OK,
           "filesystem API creates a root directory");
     check(image[6][64] == 'W' && image[6][75] == 0x10U,
           "root directory entry has the correct name and attributes");
     check(image[6][96] == 0,
           "root directory end marker remains after creation");
-    check(fmkdir(root_mkdir_path) == FMKDIR_EXISTS,
+    check(fnewdirectory(root_mkdir_path) == FNEWDIRECTORY_EXISTS,
           "creating an existing directory is rejected");
 
     char nested_mkdir_path[] = "|A/FOLDER/CHILD";
-    check(fmkdir(nested_mkdir_path) == FMKDIR_OK,
+    check(fnewdirectory(nested_mkdir_path) == FNEWDIRECTORY_OK,
           "filesystem API creates a nested directory");
     check(image[14][32] == 'C' && image[14][43] == 0x10U,
           "nested directory entry is written in its parent");
@@ -290,11 +290,11 @@ int main(void) {
     check(created_directory && closedir(created_directory) == 0,
           "new nested directory handle closes");
 
-    check(fmkdir("|A/FOLDER/INNER.TXT/CHILD") == FMKDIR_INVALID,
+    check(fnewdirectory("|A/FOLDER/INNER.TXT/CHILD") == FNEWDIRECTORY_INVALID,
           "directory creation rejects a file as its parent");
-    check(fmkdir("|A/MISSING/CHILD") == FMKDIR_INVALID,
+    check(fnewdirectory("|A/MISSING/CHILD") == FNEWDIRECTORY_INVALID,
           "directory creation rejects a missing parent");
-    check(fmkdir("|A//BROKEN") == FMKDIR_INVALID,
+    check(fnewdirectory("|A//BROKEN") == FNEWDIRECTORY_INVALID,
           "directory creation rejects repeated separators");
 
     u32 work_cluster = (u32)image[6][90] |
@@ -307,25 +307,42 @@ int main(void) {
     work_entry = open_work ? readdir(open_work) : 0;
     check(work_entry && strcmp(work_entry->name, "..") == 0,
           "new directory accepts its root-parent entry");
-    check(frmdir("|A/WORK") == FRMDIR_BUSY,
+    check(fremovedirectory("|A/WORK") == FREMOVEDIRECTORY_BUSY,
           "open directory cannot be removed");
     check(open_work && closedir(open_work) == 0,
           "open directory closes before removal");
-    check(frmdir("|A/WORK") == FRMDIR_OK,
+    check(fremovedirectory("|A/WORK") == FREMOVEDIRECTORY_OK,
           "filesystem API removes an empty directory");
     check(image[6][64] == 0xE5,
           "removed directory entry is marked deleted");
     check(work_cluster >= 2 && work_cluster < MAX_CLUSTERS &&
           links[work_cluster] == 0,
           "removed directory cluster is released");
-    check(frmdir("|A/FOLDER") == FRMDIR_NOT_EMPTY,
+    check(fremovedirectory("|A/FOLDER") == FREMOVEDIRECTORY_NOT_EMPTY,
           "non-empty directory removal is rejected");
-    check(frmdir("|A/DOC.TXT") == FRMDIR_NOT_DIR,
+    check(fremovedirectory("|A/DOC.TXT") == FREMOVEDIRECTORY_NOT_DIR,
           "directory removal rejects a file");
-    check(frmdir("|A/MISSING") == FRMDIR_NOT_FOUND,
+    check(fremovedirectory("|A/MISSING") == FREMOVEDIRECTORY_NOT_FOUND,
           "directory removal reports a missing path");
-    check(frmdir("|A/") == FRMDIR_INVALID,
+    check(fremovedirectory("|A/") == FREMOVEDIRECTORY_INVALID,
           "filesystem root cannot be removed");
+
+    check(fnewdirectory("|A/OLD") == FNEWDIRECTORY_OK,
+          "directory rename fixture is created");
+    check(frename("|A/OLD", "NEW") == FRENAME_OK,
+          "filesystem API renames a directory");
+    DIR *renamed_directory = opendir("|A/NEW");
+    check(renamed_directory != 0,
+          "renamed directory can be opened");
+    check(renamed_directory && closedir(renamed_directory) == 0,
+          "renamed directory handle closes");
+    check(opendir("|A/OLD") == 0,
+          "old directory name is no longer present");
+    check(frename("|A/NEW", "FOLDER") == FRENAME_EXISTS,
+          "directory rename rejects an existing destination");
+    check(fremovedirectory("|A/NEW") == FREMOVEDIRECTORY_OK,
+          "renamed directory can be removed");
+
 
     file = fopen("|A/NEW.TXT", FOPEN_WRITE | FOPEN_CREATE);
     check(file != 0, "fopen creates a new file for writing");
@@ -336,7 +353,30 @@ int main(void) {
     check(file && fsize(file) == 8 && fread(data, 8, file) == 8 && memcmp(data, "new-data", 8) == 0, "created file can be reopened and read");
     check(file && fclose(file) == 0, "created file read handle closes");
 
-    char remove_path[] = "|A/NEW.TXT";
+    check(frename("|A/MISSING.TXT", "OTHER.TXT") == FRENAME_NOT_FOUND,
+          "rename reports a missing source");
+    check(frename("|A/NEW.TXT", "BAD/NAME.TXT") == FRENAME_INVALID,
+          "rename rejects directory separators in the new name");
+    check(frename("|A/NEW.TXT", "DOC.TXT") == FRENAME_EXISTS,
+          "rename rejects an existing destination");
+    check(frename("|A/NEW.TXT", "RENAMED.TXT") == FRENAME_OK,
+          "filesystem API renames a file");
+    check(fopen("|A/NEW.TXT", FOPEN_READ) == 0,
+          "old filename is no longer present after rename");
+    file = fopen("|A/RENAMED.TXT", FOPEN_READ);
+    check(file && fsize(file) == 8,
+          "renamed file retains its contents and size");
+    check(file && fclose(file) == 0,
+          "renamed file read handle closes");
+    file = fopen("|A/RENAMED.TXT", FOPEN_READ);
+    check(file != 0, "renamed file opens before busy test");
+    check(frename("|A/RENAMED.TXT", "BUSY.TXT") == FRENAME_BUSY,
+          "open file cannot be renamed");
+    check(file && fclose(file) == 0,
+          "renamed file closes after busy test");
+
+
+    char remove_path[] = "|A/RENAMED.TXT";
     file = fopen(remove_path, FOPEN_READ);
     check(file != 0, "file opens before deletion test");
     check(fremove(remove_path) == FREMOVE_BUSY,

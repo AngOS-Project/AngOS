@@ -501,6 +501,21 @@ static bool fs_normalize_relative_path(const char *path, char output[FILENAME_LE
     return true;
 }
 
+
+static bool fs_path_is_same_or_child(const char *path, const char *parent) {
+    if (!path || !parent)
+        return false;
+
+    while (*parent && *path) {
+        if (fs_path_lower(*path) != fs_path_lower(*parent))
+            return false;
+        ++path;
+        ++parent;
+    }
+
+    return *parent == '\0' && (*path == '\0' || *path == '/');
+}
+
 int fremove(char *path) {
     u8 volume;
     const char *relative;
@@ -547,55 +562,55 @@ int fremove(char *path) {
 }
 
 
-int fmkdir(char *path) {
+int fnewdirectory(char *path) {
     u8 volume;
     const char *relative;
     char node_path[FILENAME_LENGTH];
 
     if (!fs_parse_volume_path(path, &volume, &relative) ||
         !fs_normalize_relative_path(relative, node_path))
-        return FMKDIR_INVALID;
+        return FNEWDIRECTORY_INVALID;
 
     fat_node_fs *filesystem = fs_native_filesystem(volume);
     if (!filesystem)
-        return FMKDIR_IO_ERROR;
+        return FNEWDIRECTORY_IO_ERROR;
 
-    int result = fat_node_create_directory(filesystem, node_path);
+    int result = fat_node_new_directory(filesystem, node_path);
 
     switch (result) {
-        case FAT_MKDIR_OK:
-            return FMKDIR_OK;
-        case FAT_MKDIR_NO_SPACE:
-            return FMKDIR_NO_SPACE;
-        case FAT_MKDIR_EXISTS:
-            return FMKDIR_EXISTS;
-        case FAT_MKDIR_INVALID:
-            return FMKDIR_INVALID;
+        case FAT_NEWDIRECTORY_OK:
+            return FNEWDIRECTORY_OK;
+        case FAT_NEWDIRECTORY_NO_SPACE:
+            return FNEWDIRECTORY_NO_SPACE;
+        case FAT_NEWDIRECTORY_EXISTS:
+            return FNEWDIRECTORY_EXISTS;
+        case FAT_NEWDIRECTORY_INVALID:
+            return FNEWDIRECTORY_INVALID;
         default:
-            return FMKDIR_IO_ERROR;
+            return FNEWDIRECTORY_IO_ERROR;
     }
 }
 
 
-int frmdir(char *path) {
+int fremovedirectory(char *path) {
     u8 volume;
     const char *relative;
     char node_path[FILENAME_LENGTH];
 
     if (!fs_parse_volume_path(path, &volume, &relative) ||
         !fs_normalize_relative_path(relative, node_path))
-        return FRMDIR_INVALID;
+        return FREMOVEDIRECTORY_INVALID;
 
     fat_node_fs *filesystem = fs_native_filesystem(volume);
     if (!filesystem)
-        return FRMDIR_IO_ERROR;
+        return FREMOVEDIRECTORY_IO_ERROR;
 
     fat_node target;
     if (!fat_node_lookup(filesystem, node_path, &target))
-        return FRMDIR_NOT_FOUND;
+        return FREMOVEDIRECTORY_NOT_FOUND;
 
     if (target.is_root)
-        return FRMDIR_INVALID;
+        return FREMOVEDIRECTORY_INVALID;
 
     if (target.attributes & 0x10U) {
         for (u32 i = 0; i < MAX_OPEN_DIRS; ++i) {
@@ -614,29 +629,105 @@ int frmdir(char *path) {
                 iterator->directory.first_cluster == target.first_cluster &&
                 iterator->directory.fixed_root == target.fixed_root &&
                 iterator->directory.is_root == target.is_root)
-                return FRMDIR_BUSY;
+                return FREMOVEDIRECTORY_BUSY;
         }
     }
 
-    int result = fat_node_delete_directory(filesystem, node_path);
+    int result = fat_node_remove_directory(filesystem, node_path);
 
     switch (result) {
-        case FAT_RMDIR_OK:
-            return FRMDIR_OK;
-        case FAT_RMDIR_NOT_FOUND:
-            return FRMDIR_NOT_FOUND;
-        case FAT_RMDIR_INVALID:
-            return FRMDIR_INVALID;
-        case FAT_RMDIR_READ_ONLY:
-            return FRMDIR_READ_ONLY;
-        case FAT_RMDIR_CLEANUP_ERROR:
-            return FRMDIR_CLEANUP_ERROR;
-        case FAT_RMDIR_NOT_DIR:
-            return FRMDIR_NOT_DIR;
-        case FAT_RMDIR_NOT_EMPTY:
-            return FRMDIR_NOT_EMPTY;
+        case FAT_REMOVEDIRECTORY_OK:
+            return FREMOVEDIRECTORY_OK;
+        case FAT_REMOVEDIRECTORY_NOT_FOUND:
+            return FREMOVEDIRECTORY_NOT_FOUND;
+        case FAT_REMOVEDIRECTORY_INVALID:
+            return FREMOVEDIRECTORY_INVALID;
+        case FAT_REMOVEDIRECTORY_READ_ONLY:
+            return FREMOVEDIRECTORY_READ_ONLY;
+        case FAT_REMOVEDIRECTORY_CLEANUP_ERROR:
+            return FREMOVEDIRECTORY_CLEANUP_ERROR;
+        case FAT_REMOVEDIRECTORY_NOT_DIR:
+            return FREMOVEDIRECTORY_NOT_DIR;
+        case FAT_REMOVEDIRECTORY_NOT_EMPTY:
+            return FREMOVEDIRECTORY_NOT_EMPTY;
         default:
-            return FRMDIR_IO_ERROR;
+            return FREMOVEDIRECTORY_IO_ERROR;
+    }
+}
+
+
+int frename(char *path, char *new_name) {
+    u8 volume;
+    const char *relative;
+    char node_path[FILENAME_LENGTH];
+
+    if (!fs_parse_volume_path(path, &volume, &relative) ||
+        !fs_normalize_relative_path(relative, node_path) ||
+        !new_name || !new_name[0])
+        return FRENAME_INVALID;
+
+    fat_node_fs *filesystem = fs_native_filesystem(volume);
+    if (!filesystem)
+        return FRENAME_IO_ERROR;
+
+    fat_node target;
+    if (!fat_node_lookup(filesystem, node_path, &target))
+        return FRENAME_NOT_FOUND;
+
+    if (target.is_root)
+        return FRENAME_INVALID;
+
+    for (u32 i = 0; i < MAX_OPEN_FILES; ++i) {
+        FILE *open_file = &files[i];
+        char open_path[FILENAME_LENGTH];
+
+        if (!fs_file_is_open(open_file) || open_file->volume != volume)
+            continue;
+
+        if (!fs_join_file_path(open_file, open_path))
+            continue;
+
+        if (fs_paths_equal(open_path, node_path) ||
+            ((target.attributes & 0x10U) &&
+             fs_path_is_same_or_child(open_path, node_path)))
+            return FRENAME_BUSY;
+    }
+
+    if (target.attributes & 0x10U) {
+        for (u32 i = 0; i < MAX_OPEN_DIRS; ++i) {
+            DIR *open_dir = &dir_table[i];
+
+            if (!open_dir->used ||
+                open_dir->volume != volume ||
+                (open_dir->reserved != DIR_STATE_NATIVE &&
+                 open_dir->reserved != DIR_STATE_ERROR))
+                continue;
+
+            fat_node_dir *iterator =
+                (fat_node_dir *)(uintptr_t)open_dir->fsdata[0];
+
+            if (iterator &&
+                iterator->directory.first_cluster == target.first_cluster &&
+                iterator->directory.fixed_root == target.fixed_root)
+                return FRENAME_BUSY;
+        }
+    }
+
+    int result = fat_node_rename_entry(filesystem, node_path, new_name);
+
+    switch (result) {
+        case FAT_RENAME_OK:
+            return FRENAME_OK;
+        case FAT_RENAME_NOT_FOUND:
+            return FRENAME_NOT_FOUND;
+        case FAT_RENAME_INVALID:
+            return FRENAME_INVALID;
+        case FAT_RENAME_READ_ONLY:
+            return FRENAME_READ_ONLY;
+        case FAT_RENAME_EXISTS:
+            return FRENAME_EXISTS;
+        default:
+            return FRENAME_IO_ERROR;
     }
 }
 

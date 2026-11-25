@@ -444,9 +444,9 @@ static void shell_rm(const char *argument) {
 }
 
 
-static void shell_mkdir(const char *argument) {
+static void shell_newdirectory(const char *argument) {
     if (!argument) {
-        terminal_write("Usage: mkdir <directory-path>\n");
+        terminal_write("Usage: newdirectory <directory-path>\n");
         return;
     }
 
@@ -458,12 +458,12 @@ static void shell_mkdir(const char *argument) {
 
     while (*argument && *argument != ' ' && *argument != '\t') {
         if (length >= sizeof(directory_name) - 1) {
-            terminal_write("mkdir: directory path is too long\n");
+            terminal_write("newdirectory: directory path is too long\n");
             return;
         }
 
         if ((u8)*argument < 32) {
-            terminal_write("mkdir: directory path contains an invalid character\n");
+            terminal_write("newdirectory: directory path contains an invalid character\n");
             return;
         }
 
@@ -471,7 +471,7 @@ static void shell_mkdir(const char *argument) {
     }
 
     if (length == 0) {
-        terminal_write("Usage: mkdir <directory-path>\n");
+        terminal_write("Usage: newdirectory <directory-path>\n");
         return;
     }
 
@@ -481,7 +481,7 @@ static void shell_mkdir(const char *argument) {
         ++argument;
 
     if (*argument) {
-        terminal_write("Usage: mkdir <directory-path>\n");
+        terminal_write("Usage: newdirectory <directory-path>\n");
         return;
     }
 
@@ -491,34 +491,34 @@ static void shell_mkdir(const char *argument) {
     path[2] = '/';
     memcpy(path + 3, directory_name, length + 1);
 
-    int result = fmkdir(path);
+    int result = fnewdirectory(path);
 
     switch (result) {
-        case FMKDIR_OK:
-            terminal_write("mkdir: PASS - created ");
+        case FNEWDIRECTORY_OK:
+            terminal_write("newdirectory: PASS - created ");
             terminal_write(directory_name);
             terminal_write("\n");
             break;
-        case FMKDIR_EXISTS:
-            terminal_write("mkdir: a file or directory already has that name\n");
+        case FNEWDIRECTORY_EXISTS:
+            terminal_write("newdirectory: a file or directory already has that name\n");
             break;
-        case FMKDIR_NO_SPACE:
-            terminal_write("mkdir: not enough free space for the directory\n");
+        case FNEWDIRECTORY_NO_SPACE:
+            terminal_write("newdirectory: not enough free space for the directory\n");
             break;
-        case FMKDIR_INVALID:
-            terminal_write("mkdir: invalid name or parent directory; use FAT 8.3 names\n");
+        case FNEWDIRECTORY_INVALID:
+            terminal_write("newdirectory: invalid name or parent directory; use FAT 8.3 names\n");
             break;
-        case FMKDIR_IO_ERROR:
+        case FNEWDIRECTORY_IO_ERROR:
         default:
-            terminal_write("mkdir: filesystem read or write failed\n");
+            terminal_write("newdirectory: filesystem read or write failed\n");
             break;
     }
 }
 
 
-static void shell_rmdir(const char *argument) {
+static void shell_removedirectory(const char *argument) {
     if (!argument) {
-        terminal_write("Usage: rmdir <directory-path>\n");
+        terminal_write("Usage: removedirectory <directory-path>\n");
         return;
     }
 
@@ -535,12 +535,12 @@ static void shell_rmdir(const char *argument) {
     while (*argument && (quoted ? *argument != '"' :
            (*argument != ' ' && *argument != '\t'))) {
         if (length >= sizeof(directory_name) - 1) {
-            terminal_write("rmdir: directory path is too long\n");
+            terminal_write("removedirectory: directory path is too long\n");
             return;
         }
 
         if ((u8)*argument < 32) {
-            terminal_write("rmdir: invalid directory path\n");
+            terminal_write("removedirectory: invalid directory path\n");
             return;
         }
 
@@ -549,14 +549,14 @@ static void shell_rmdir(const char *argument) {
 
     if (quoted) {
         if (*argument != '"') {
-            terminal_write("rmdir: missing closing quotation mark\n");
+            terminal_write("removedirectory: missing closing quotation mark\n");
             return;
         }
         ++argument;
     }
 
     if (length == 0) {
-        terminal_write("Usage: rmdir <directory-path>\n");
+        terminal_write("Usage: removedirectory <directory-path>\n");
         return;
     }
 
@@ -566,7 +566,7 @@ static void shell_rmdir(const char *argument) {
         ++argument;
 
     if (*argument) {
-        terminal_write("Usage: rmdir <directory-path>\n");
+        terminal_write("Usage: removedirectory <directory-path>\n");
         return;
     }
 
@@ -576,37 +576,144 @@ static void shell_rmdir(const char *argument) {
     path[2] = '/';
     memcpy(path + 3, directory_name, length + 1);
 
-    int result = frmdir(path);
+    int result = fremovedirectory(path);
 
     switch (result) {
-        case FRMDIR_OK:
-            terminal_write("rmdir: PASS - removed ");
+        case FREMOVEDIRECTORY_OK:
+            terminal_write("removedirectory: PASS - removed ");
             terminal_write(directory_name);
             terminal_write("\n");
             break;
-        case FRMDIR_NOT_FOUND:
-            terminal_write("rmdir: directory not found\n");
+        case FREMOVEDIRECTORY_NOT_FOUND:
+            terminal_write("removedirectory: directory not found\n");
             break;
-        case FRMDIR_INVALID:
-            terminal_write("rmdir: invalid path; the root cannot be removed\n");
+        case FREMOVEDIRECTORY_INVALID:
+            terminal_write("removedirectory: invalid path; the root cannot be removed\n");
             break;
-        case FRMDIR_READ_ONLY:
-            terminal_write("rmdir: directory is marked read-only\n");
+        case FREMOVEDIRECTORY_READ_ONLY:
+            terminal_write("removedirectory: directory is marked read-only\n");
             break;
-        case FRMDIR_NOT_DIR:
-            terminal_write("rmdir: target is not a directory\n");
+        case FREMOVEDIRECTORY_NOT_DIR:
+            terminal_write("removedirectory: target is not a directory\n");
             break;
-        case FRMDIR_NOT_EMPTY:
-            terminal_write("rmdir: directory is not empty\n");
+        case FREMOVEDIRECTORY_NOT_EMPTY:
+            terminal_write("removedirectory: directory is not empty\n");
             break;
-        case FRMDIR_BUSY:
-            terminal_write("rmdir: close the directory before removing it\n");
+        case FREMOVEDIRECTORY_BUSY:
+            terminal_write("removedirectory: close the directory before removing it\n");
             break;
-        case FRMDIR_CLEANUP_ERROR:
-            terminal_write("rmdir: entry removed, but cluster cleanup failed\n");
+        case FREMOVEDIRECTORY_CLEANUP_ERROR:
+            terminal_write("removedirectory: entry removed, but cluster cleanup failed\n");
             break;
         default:
-            terminal_write("rmdir: filesystem read, write or verification failed\n");
+            terminal_write("removedirectory: filesystem read, write or verification failed\n");
+            break;
+    }
+}
+
+
+static void shell_rename(const char *argument) {
+    if (!argument) {
+        terminal_write("Usage: rename <path> <new-name>\n");
+        return;
+    }
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    bool quoted = *argument == '"';
+    if (quoted)
+        ++argument;
+
+    char source_name[125];
+    u32 source_length = 0;
+
+    while (*argument && (quoted ? *argument != '"' :
+           (*argument != ' ' && *argument != '\t'))) {
+        if (source_length >= sizeof(source_name) - 1) {
+            terminal_write("rename: source path is too long\n");
+            return;
+        }
+        source_name[source_length++] = *argument++;
+    }
+
+    if (quoted) {
+        if (*argument != '"') {
+            terminal_write("rename: missing closing quotation mark\n");
+            return;
+        }
+        ++argument;
+    }
+
+    if (source_length == 0) {
+        terminal_write("Usage: rename <path> <new-name>\n");
+        return;
+    }
+
+    source_name[source_length] = '\0';
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    char new_name[13];
+    u32 new_length = 0;
+
+    while (*argument && *argument != ' ' && *argument != '\t') {
+        if (new_length >= sizeof(new_name) - 1) {
+            terminal_write("rename: new name must use the FAT 8.3 format\n");
+            return;
+        }
+        new_name[new_length++] = *argument++;
+    }
+
+    if (new_length == 0) {
+        terminal_write("Usage: rename <path> <new-name>\n");
+        return;
+    }
+
+    new_name[new_length] = '\0';
+
+    while (*argument == ' ' || *argument == '\t')
+        ++argument;
+
+    if (*argument) {
+        terminal_write("Usage: rename <path> <new-name>\n");
+        return;
+    }
+
+    char path[128];
+    path[0] = '|';
+    path[1] = 'A';
+    path[2] = '/';
+    memcpy(path + 3, source_name, source_length + 1);
+
+    int result = frename(path, new_name);
+
+    switch (result) {
+        case FRENAME_OK:
+            terminal_write("rename: PASS - renamed ");
+            terminal_write(source_name);
+            terminal_write(" to ");
+            terminal_write(new_name);
+            terminal_write("\n");
+            break;
+        case FRENAME_NOT_FOUND:
+            terminal_write("rename: source not found\n");
+            break;
+        case FRENAME_INVALID:
+            terminal_write("rename: invalid path or FAT 8.3 destination name\n");
+            break;
+        case FRENAME_READ_ONLY:
+            terminal_write("rename: source is marked read-only\n");
+            break;
+        case FRENAME_EXISTS:
+            terminal_write("rename: destination already exists\n");
+            break;
+        case FRENAME_BUSY:
+            terminal_write("rename: close the source before renaming it\n");
+            break;
+        default:
+            terminal_write("rename: filesystem read, write or verification failed\n");
             break;
     }
 }
@@ -1777,8 +1884,8 @@ static const char *shell_normalize_command(const char *command) {
     u32 end = 0;
     while (input[end] && input[end] != ' ' && input[end] != '\t')
         ++end;
-    static const char *full_names[] = {"help", "clear", "version", "list", "cat", "status", "new", "mkdir", "echo", "edit", "copy", "remove", "rmdir", "watchtower"};
-    static const char *aliases[] = {"h", "cls", "ver", "ls", "ct", "stat", "nw", "md", "ec", "ed", "cp", "rm", "rd", "wt"};
+    static const char *full_names[] = {"help", "clear", "version", "list", "cat", "status", "new", "newdirectory", "echo", "edit", "copy", "remove", "removedirectory", "rename", "watchtower"};
+    static const char *aliases[] = {"h", "cls", "ver", "ls", "ct", "stat", "nw", "nwd", "ec", "ed", "cp", "rm", "rmd", "rn", "wt"};
     for (u32 k = 0; k < sizeof(full_names) / sizeof(full_names[0]); ++k) {
         u32 length = 0;
         while (full_names[k][length])
@@ -1832,8 +1939,9 @@ static void shell_help(const char *topic) {
         terminal_write("cat        ct       cat <file>                     Display file contents\n");
         terminal_write("status     stat     status <path>                  Show file or directory\n");
         terminal_write("new        nw       new <filename>                 Create an empty file\n");
-        terminal_write("mkdir      md       mkdir <directory-path>        Create a directory\n");
-        terminal_write("rmdir      rd       rmdir <directory-path>        Remove an empty directory\n");
+        terminal_write("newdirectory nwd      newdirectory <directory-path>        Create a directory\n");
+        terminal_write("removedirectory rmd      removedirectory <directory-path>        Remove an empty directory\n");
+        terminal_write("rename     rn       rename <path> <new-name>       Rename a file or directory\n");
         terminal_write("echo       ec       echo [text]                    Print text or a blank line\n");
         terminal_write("edit       ed       edit <file> <action> [text]    Edit one file line\n");
         terminal_write("copy       cp       copy <source> <destination>   Copy a file\n");
@@ -1919,24 +2027,28 @@ static void shell_help(const char *topic) {
         terminal_write("          Existing files are left unchanged.\n");
         terminal_write("Example : new notes.txt\n");
         terminal_write("          nw notes.txt\n");
-    } else if (strcmp_local(topic, "md") == 0) {
-        terminal_write("Command : mkdir | md\n");
+    } else if (strcmp_local(topic, "nwd") == 0) {
+        terminal_write("Command : newdirectory | nwd\n");
         terminal_write("Purpose : Create a directory through the native FAT filesystem.\n");
-        terminal_write("Usage: mkdir <directory-path> | md <directory-path>\n");
+        terminal_write("Usage: newdirectory <directory-path> | nwd <directory-path>\n");
         terminal_write("Details : Supports FAT12, FAT16 and FAT32 volumes and nested paths.\n");
         terminal_write("          Directory names currently use the FAT 8.3 format.\n");
         terminal_write("          The parent directory must already exist.\n");
-        terminal_write("Examples: mkdir PROJECT\n");
-        terminal_write("          md DOCUMENTS/WORK\n");
-    } else if (strcmp_local(topic, "rd") == 0) {
-        terminal_write("Command : rmdir | rd\n");
+        terminal_write("Example : newdirectory PROJECT\n");
+    } else if (strcmp_local(topic, "rmd") == 0) {
+        terminal_write("Command : removedirectory | rmd\n");
         terminal_write("Purpose : Remove an empty directory through the native FAT filesystem.\n");
-        terminal_write("Usage: rmdir <directory-path> | rd <directory-path>\n");
-        terminal_write("Details : Supports FAT12, FAT16 and FAT32 volumes.\n");
-        terminal_write("          Non-empty directories and the filesystem root are protected.\n");
+        terminal_write("Usage: removedirectory <directory-path> | rmd <directory-path>\n");
+        terminal_write("Details : Non-empty directories and the filesystem root are protected.\n");
         terminal_write("          Close the directory before removing it.\n");
-        terminal_write("Example : rmdir PROJECT\n");
-        terminal_write("          rd DOCUMENTS/WORK\n");
+        terminal_write("Example : removedirectory PROJECT\n");
+    } else if (strcmp_local(topic, "rn") == 0) {
+        terminal_write("Command : rename | rn\n");
+        terminal_write("Purpose : Rename a file or directory in its current parent directory.\n");
+        terminal_write("Usage: rename <path> <new-name> | rn <path> <new-name>\n");
+        terminal_write("Details : The new name must use the FAT 8.3 format.\n");
+        terminal_write("          The destination name must not already exist.\n");
+        terminal_write("Example : rename NOTES.TXT NOTES.BAK\n");
     } else if (strcmp_local(topic, "ec") == 0) {
         terminal_write("Command : echo | ec\n");
         terminal_write("Purpose : Print text to the terminal.\n");
@@ -2388,28 +2500,40 @@ void execute_command(const char *cmd) {
         );
 
     } else if (
-        strcmp_local(cmd, "md") == 0
+        strcmp_local(cmd, "nwd") == 0
     ) {
 
-        shell_mkdir("");
+        shell_newdirectory("");
 
     } else if (
-        starts_with_local(cmd, "md ")
+        starts_with_local(cmd, "nwd ")
     ) {
 
-        shell_mkdir(cmd + 3);
+        shell_newdirectory(cmd + 4);
 
     } else if (
-        strcmp_local(cmd, "rd") == 0
+        strcmp_local(cmd, "rmd") == 0
     ) {
 
-        shell_rmdir("");
+        shell_removedirectory("");
 
     } else if (
-        starts_with_local(cmd, "rd ")
+        starts_with_local(cmd, "rmd ")
     ) {
 
-        shell_rmdir(cmd + 3);
+        shell_removedirectory(cmd + 4);
+
+    } else if (
+        strcmp_local(cmd, "rn") == 0
+    ) {
+
+        shell_rename("");
+
+    } else if (
+        starts_with_local(cmd, "rn ")
+    ) {
+
+        shell_rename(cmd + 3);
 
     } else if (
         strcmp_local(cmd, "ec") == 0

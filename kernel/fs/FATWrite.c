@@ -758,14 +758,14 @@ int fat_node_delete_file(fat_node_fs *filesystem, const char *path) {
 }
 
 
-int fat_node_delete_directory(fat_node_fs *filesystem, const char *path) {
+int fat_node_remove_directory(fat_node_fs *filesystem, const char *path) {
     if (!filesystem || !path || !path[0])
-        return FAT_RMDIR_INVALID;
+        return FAT_REMOVEDIRECTORY_INVALID;
 
     u32 path_length = 0;
     while (path[path_length]) {
         if (path_length >= FAT_NODE_NAME_MAX)
-            return FAT_RMDIR_INVALID;
+            return FAT_REMOVEDIRECTORY_INVALID;
         ++path_length;
     }
 
@@ -775,7 +775,7 @@ int fat_node_delete_directory(fat_node_fs *filesystem, const char *path) {
 
     u32 name_length = path_length - split;
     if (name_length == 0 || name_length > FAT_NODE_NAME_MAX)
-        return FAT_RMDIR_INVALID;
+        return FAT_REMOVEDIRECTORY_INVALID;
 
     char directory_name[FAT_NODE_NAME_MAX + 1];
     memcpy(directory_name, path + split, name_length);
@@ -787,24 +787,24 @@ int fat_node_delete_directory(fat_node_fs *filesystem, const char *path) {
 
     if (parent_length == 0) {
         if (!fat_node_root(filesystem, &parent))
-            return FAT_RMDIR_INVALID;
+            return FAT_REMOVEDIRECTORY_INVALID;
     } else {
         if (parent_length > FAT_NODE_NAME_MAX)
-            return FAT_RMDIR_INVALID;
+            return FAT_REMOVEDIRECTORY_INVALID;
 
         memcpy(parent_path, path, parent_length);
         parent_path[parent_length] = '\0';
 
         if (!fat_node_lookup(filesystem, parent_path, &parent))
-            return FAT_RMDIR_NOT_FOUND;
+            return FAT_REMOVEDIRECTORY_NOT_FOUND;
 
         if (!(parent.attributes & 0x10U))
-            return FAT_RMDIR_NOT_DIR;
+            return FAT_REMOVEDIRECTORY_NOT_DIR;
     }
 
     fat_node_dir parent_directory;
     if (!fat_node_dir_open(filesystem, &parent, &parent_directory))
-        return FAT_RMDIR_IO_ERROR;
+        return FAT_REMOVEDIRECTORY_IO_ERROR;
 
     fat_node_entry found;
     bool matched = false;
@@ -819,41 +819,211 @@ int fat_node_delete_directory(fat_node_fs *filesystem, const char *path) {
 
     if (!matched)
         return state == FAT_NODE_ERROR
-            ? FAT_RMDIR_IO_ERROR
-            : FAT_RMDIR_NOT_FOUND;
+            ? FAT_REMOVEDIRECTORY_IO_ERROR
+            : FAT_REMOVEDIRECTORY_NOT_FOUND;
 
     if (found.type != FAT_NODE_DIRECTORY ||
         !(found.node.attributes & 0x10U))
-        return FAT_RMDIR_NOT_DIR;
+        return FAT_REMOVEDIRECTORY_NOT_DIR;
 
     if (found.node.attributes & 0x01U)
-        return FAT_RMDIR_READ_ONLY;
+        return FAT_REMOVEDIRECTORY_READ_ONLY;
 
     if (!fat_write_delete_directory_chain_valid(
             &filesystem->volume, &found.node))
-        return FAT_RMDIR_IO_ERROR;
+        return FAT_REMOVEDIRECTORY_IO_ERROR;
 
     fat_node_dir child_directory;
     if (!fat_node_dir_open(filesystem, &found.node, &child_directory))
-        return FAT_RMDIR_IO_ERROR;
+        return FAT_REMOVEDIRECTORY_IO_ERROR;
 
     fat_node_entry child;
     while ((state = fat_node_dir_next(&child_directory, &child)) == FAT_NODE_ENTRY) {
         if (!fat_write_delete_dot_entry(child.name))
-            return FAT_RMDIR_NOT_EMPTY;
+            return FAT_REMOVEDIRECTORY_NOT_EMPTY;
     }
 
     if (state == FAT_NODE_ERROR)
-        return FAT_RMDIR_IO_ERROR;
+        return FAT_REMOVEDIRECTORY_IO_ERROR;
 
     int result = fat_write_delete_commit(filesystem, &found, true);
 
     if (result == FAT_DELETE_OK)
-        return FAT_RMDIR_OK;
+        return FAT_REMOVEDIRECTORY_OK;
     if (result == FAT_DELETE_CLEANUP_ERROR)
-        return FAT_RMDIR_CLEANUP_ERROR;
+        return FAT_REMOVEDIRECTORY_CLEANUP_ERROR;
 
-    return FAT_RMDIR_IO_ERROR;
+    return FAT_REMOVEDIRECTORY_IO_ERROR;
+}
+
+
+static int fat_write_rename_commit(
+    fat_node_fs *filesystem,
+    const fat_node_entry *entry,
+    const u8 new_name[11]
+) {
+    fat_write_delete_sector sectors[FAT_WRITE_DELETE_MAX_SECTORS];
+    memset(sectors, 0, sizeof(sectors));
+    u8 sector_count = 0;
+
+    if (!filesystem || !entry || !new_name ||
+        entry->lfn_count > FAT_NODE_LFN_MAX)
+        return FAT_RENAME_IO_ERROR;
+
+    for (u32 i = 0; i < entry->lfn_count; ++i) {
+        const fat_node_dir_slot *slot = &entry->lfn_slots[i];
+        if (!fat_write_delete_mark_slot(
+                filesystem,
+                sectors,
+                &sector_count,
+                slot->lba,
+                slot->offset,
+                slot->raw,
+                true,
+                false))
+            return FAT_RENAME_IO_ERROR;
+    }
+
+    int short_index = fat_write_delete_sector_get(
+        filesystem, sectors, &sector_count, entry->short_lba
+    );
+
+    if (short_index < 0 ||
+        entry->short_offset > SECTOR_SIZE - FAT_WRITE_ENTRY_SIZE)
+        return FAT_RENAME_IO_ERROR;
+
+    fat_write_delete_sector *short_sector = &sectors[short_index];
+    const u8 *current = &short_sector->original[entry->short_offset];
+
+    if (current[0] == 0x00 || current[0] == 0xE5 ||
+        current[11] == 0x0F ||
+        memcmp(current, entry->raw, FAT_WRITE_ENTRY_SIZE) != 0)
+        return FAT_RENAME_IO_ERROR;
+
+    memcpy(
+        &short_sector->updated[entry->short_offset],
+        new_name,
+        11
+    );
+    short_sector->updated[entry->short_offset + 12] = 0;
+
+    for (u32 i = 0; i < sector_count; ++i) {
+        if ((int)i == short_index)
+            continue;
+
+        if (!fat_write_delete_write_sector(filesystem, &sectors[i])) {
+            fat_write_delete_rollback(filesystem, sectors, sector_count);
+            return FAT_RENAME_IO_ERROR;
+        }
+    }
+
+    if (!fat_write_delete_write_sector(filesystem, &sectors[short_index])) {
+        fat_write_delete_rollback(filesystem, sectors, sector_count);
+        return FAT_RENAME_IO_ERROR;
+    }
+
+    return FAT_RENAME_OK;
+}
+
+
+int fat_node_rename_entry(
+    fat_node_fs *filesystem,
+    const char *path,
+    const char *new_name
+) {
+    if (!filesystem || !path || !path[0] || !new_name || !new_name[0])
+        return FAT_RENAME_INVALID;
+
+    u32 path_length = 0;
+    while (path[path_length]) {
+        if (path_length >= FAT_NODE_NAME_MAX)
+            return FAT_RENAME_INVALID;
+        ++path_length;
+    }
+
+    u32 split = path_length;
+    while (split > 0 && path[split - 1] != '/' && path[split - 1] != '\\')
+        --split;
+
+    u32 old_name_length = path_length - split;
+    if (old_name_length == 0 || old_name_length > FAT_NODE_NAME_MAX)
+        return FAT_RENAME_INVALID;
+
+    char old_name[FAT_NODE_NAME_MAX + 1];
+    memcpy(old_name, path + split, old_name_length);
+    old_name[old_name_length] = '\0';
+
+    u8 encoded_name[11];
+    if (!fat_write_encode_name(new_name, encoded_name))
+        return FAT_RENAME_INVALID;
+
+    char parent_path[FAT_NODE_NAME_MAX + 1];
+    fat_node parent;
+    u32 parent_length = split == 0 ? 0 : split - 1U;
+
+    if (parent_length == 0) {
+        if (!fat_node_root(filesystem, &parent))
+            return FAT_RENAME_INVALID;
+    } else {
+        if (parent_length > FAT_NODE_NAME_MAX)
+            return FAT_RENAME_INVALID;
+
+        memcpy(parent_path, path, parent_length);
+        parent_path[parent_length] = '\0';
+
+        if (!fat_node_lookup(filesystem, parent_path, &parent))
+            return FAT_RENAME_NOT_FOUND;
+    }
+
+    if (!(parent.attributes & 0x10U))
+        return FAT_RENAME_INVALID;
+
+    fat_node_dir directory;
+    if (!fat_node_dir_open(filesystem, &parent, &directory))
+        return FAT_RENAME_IO_ERROR;
+
+    fat_node_entry found;
+    fat_node_entry source_entry;
+    memset(&source_entry, 0, sizeof(source_entry));
+
+    bool source_found = false;
+    bool conflict_found = false;
+    int state;
+
+    while ((state = fat_node_dir_next(&directory, &found)) == FAT_NODE_ENTRY) {
+        bool source_match =
+            fat_write_delete_name_equal(old_name, found.name);
+
+        bool target_match =
+            fat_write_delete_name_equal(new_name, found.name) ||
+            memcmp(found.raw, encoded_name, 11) == 0;
+
+        if (source_match) {
+            source_entry = found;
+            source_found = true;
+            continue;
+        }
+
+        if (target_match)
+            conflict_found = true;
+    }
+
+    if (state == FAT_NODE_ERROR)
+        return FAT_RENAME_IO_ERROR;
+
+    if (!source_found)
+        return FAT_RENAME_NOT_FOUND;
+
+    if (conflict_found)
+        return FAT_RENAME_EXISTS;
+
+    if (source_entry.node.attributes & 0x01U)
+        return FAT_RENAME_READ_ONLY;
+
+    if (memcmp(source_entry.raw, encoded_name, 11) == 0)
+        return FAT_RENAME_OK;
+
+    return fat_write_rename_commit(filesystem, &source_entry, encoded_name);
 }
 
 int fat_node_write_file(fat_node_fs *filesystem, const char *path, const void *data, u32 length) {
@@ -934,14 +1104,14 @@ int fat_node_write_file(fat_node_fs *filesystem, const char *path, const void *d
     return FAT_WRITE_OK;
 }
 
-int fat_node_create_directory(fat_node_fs *filesystem, const char *path) {
+int fat_node_new_directory(fat_node_fs *filesystem, const char *path) {
     if (!filesystem || !path || !path[0])
-        return FAT_MKDIR_INVALID;
+        return FAT_NEWDIRECTORY_INVALID;
 
     u32 path_length = 0;
     while (path[path_length]) {
         if (path_length >= FAT_NODE_NAME_MAX)
-            return FAT_MKDIR_INVALID;
+            return FAT_NEWDIRECTORY_INVALID;
         ++path_length;
     }
 
@@ -951,7 +1121,7 @@ int fat_node_create_directory(fat_node_fs *filesystem, const char *path) {
 
     u32 name_length = path_length - split;
     if (name_length == 0 || name_length >= FAT_NODE_NAME_MAX)
-        return FAT_MKDIR_INVALID;
+        return FAT_NEWDIRECTORY_INVALID;
 
     char directory_name[FAT_NODE_NAME_MAX + 1];
     memcpy(directory_name, path + split, name_length);
@@ -959,11 +1129,11 @@ int fat_node_create_directory(fat_node_fs *filesystem, const char *path) {
 
     u8 short_name[11];
     if (!fat_write_encode_name(directory_name, short_name))
-        return FAT_MKDIR_INVALID;
+        return FAT_NEWDIRECTORY_INVALID;
 
     fat_node existing;
     if (fat_node_lookup(filesystem, path, &existing))
-        return FAT_MKDIR_EXISTS;
+        return FAT_NEWDIRECTORY_EXISTS;
 
     char parent_path[FAT_NODE_NAME_MAX + 1];
     fat_node parent;
@@ -971,33 +1141,33 @@ int fat_node_create_directory(fat_node_fs *filesystem, const char *path) {
 
     if (parent_length == 0) {
         if (!fat_node_root(filesystem, &parent))
-            return FAT_MKDIR_INVALID;
+            return FAT_NEWDIRECTORY_INVALID;
     } else {
         if (parent_length >= sizeof(parent_path))
-            return FAT_MKDIR_INVALID;
+            return FAT_NEWDIRECTORY_INVALID;
         memcpy(parent_path, path, parent_length);
         parent_path[parent_length] = '\0';
         if (!fat_node_lookup(filesystem, parent_path, &parent))
-            return FAT_MKDIR_INVALID;
+            return FAT_NEWDIRECTORY_INVALID;
     }
 
     if (!(parent.attributes & 0x10U))
-        return FAT_MKDIR_INVALID;
+        return FAT_NEWDIRECTORY_INVALID;
 
     fat_write_slot slot;
     int slot_state = fat_write_find_slot(filesystem, &parent, short_name, &slot);
     if (slot_state == FAT_WRITE_IO_ERROR)
-        return FAT_MKDIR_IO_ERROR;
+        return FAT_NEWDIRECTORY_IO_ERROR;
     if (slot_state == FAT_WRITE_INVALID)
-        return FAT_MKDIR_INVALID;
+        return FAT_NEWDIRECTORY_INVALID;
     if (slot_state == FAT_WRITE_NO_SPACE && !slot.found)
-        return FAT_MKDIR_NO_SPACE;
+        return FAT_NEWDIRECTORY_NO_SPACE;
     if (slot.existing)
-        return FAT_MKDIR_EXISTS;
+        return FAT_NEWDIRECTORY_EXISTS;
 
     u32 new_cluster = 0;
     if (!fat_native_allocate_chain(&filesystem->volume, 1, &new_cluster) || new_cluster < 2)
-        return FAT_MKDIR_NO_SPACE;
+        return FAT_NEWDIRECTORY_NO_SPACE;
 
     const u8 self_name[11] = {
         '.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '
@@ -1025,7 +1195,7 @@ int fat_node_create_directory(fat_node_fs *filesystem, const char *path) {
         if (!fat_native_cluster_sector(&filesystem->volume, new_cluster, sector_index, &lba) ||
             !disk_write_sector(lba, sector, filesystem->volume.disk)) {
             fat_native_release_chain(&filesystem->volume, new_cluster);
-            return FAT_MKDIR_IO_ERROR;
+            return FAT_NEWDIRECTORY_IO_ERROR;
         }
     }
 
@@ -1036,8 +1206,8 @@ int fat_node_create_directory(fat_node_fs *filesystem, const char *path) {
     if (committed != 1) {
         if (committed == 0)
             fat_native_release_chain(&filesystem->volume, new_cluster);
-        return FAT_MKDIR_IO_ERROR;
+        return FAT_NEWDIRECTORY_IO_ERROR;
     }
 
-    return FAT_MKDIR_OK;
+    return FAT_NEWDIRECTORY_OK;
 }
