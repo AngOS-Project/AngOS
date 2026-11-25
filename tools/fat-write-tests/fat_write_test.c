@@ -311,8 +311,8 @@ static void run_variant(u8 bits) {
     check(result == FAT_WRITE_OK, bits == 12 ? "FAT12 create file" : bits == 16 ? "FAT16 create file" : "FAT32 create file");
     u8 *entry = find_entry(root_lba(), "ALPHA   TXT");
     check(entry && get32(entry + 28) == sizeof(original), "directory entry created with correct size");
-    int mkdir_result = fat_node_create_directory(&filesystem, "WORKDIR");
-    check(mkdir_result == FAT_MKDIR_OK, "directory created on native FAT volume");
+    int mkdir_result = fat_node_new_directory(&filesystem, "WORKDIR");
+    check(mkdir_result == FAT_NEWDIRECTORY_OK, "directory created on native FAT volume");
     u8 *directory_entry = find_entry(root_lba(), "WORKDIR    ");
     u32 directory_cluster = directory_entry
         ? (u32)directory_entry[26] | ((u32)directory_entry[27] << 8) |
@@ -343,11 +343,11 @@ static void run_variant(u8 bits) {
           (looked_up_directory.attributes & 0x10U) &&
           looked_up_directory.first_cluster == directory_cluster,
           "new directory can be found through native lookup");
-    check(fat_node_create_directory(&filesystem, "WORKDIR") == FAT_MKDIR_EXISTS,
+    check(fat_node_new_directory(&filesystem, "WORKDIR") == FAT_NEWDIRECTORY_EXISTS,
           "existing directory creation is rejected");
-    check(fat_node_create_directory(&filesystem, "BADLONGDIR") == FAT_MKDIR_INVALID,
+    check(fat_node_new_directory(&filesystem, "BADLONGDIR") == FAT_NEWDIRECTORY_INVALID,
           "unsupported long directory name is rejected");
-    check(fat_node_create_directory(&filesystem, "SUBDIR/NESTED") == FAT_MKDIR_OK,
+    check(fat_node_new_directory(&filesystem, "SUBDIR/NESTED") == FAT_NEWDIRECTORY_OK,
           "nested directory created beneath an existing directory");
     u8 *nested_entry = find_entry(cluster_lba(10), "NESTED     ");
     check(nested_entry && (nested_entry[11] & 0x10U),
